@@ -20,7 +20,7 @@ obj/%.o: src/%.c
 # Useful for testing - build + run with the small stories model.
 .PHONY: run
 run: all
-	./bin/plainllm stories15M.bin
+	./bin/plainllm python/model.bin
 
 # useful for a debug build, can then e.g. analyze with valgrind, example:
 # $ valgrind --leak-check=full ./run out/model.bin -n 3

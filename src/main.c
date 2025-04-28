@@ -157,9 +157,16 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
                 char system_template[] = "[INST] <<SYS>>\n%s\n<</SYS>>\n\n%s [/INST]";
                 sprintf(rendered_prompt, system_template, system_prompt, user_prompt);
             } else {
-                char user_template[] = "[INST] %s [/INST]";
+                // char user_template[] = "[INST] %s [/INST]";
+                // For Felladrin/Llama-160M-Chat-v1:
+                char user_template[] =
+"<|im_start|>user\n\
+%s<|im_end|>\n\
+<|im_start|>assistant\n";
                 sprintf(rendered_prompt, user_template, user_prompt);
             }
+            // printf("Prompt: %s\n", rendered_prompt);
+            
             // encode the rendered prompt into tokens
             encode(tokenizer, rendered_prompt, 1, 0, prompt_tokens, &num_prompt_tokens);
             user_idx = 0; // reset the user index
@@ -191,7 +198,7 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
         }
         if (next == 2) { printf("\n"); }
     }
-    printf("\n");
+    printf("\nChat reached the max length of %d tokens.\n", steps);
     free(prompt_tokens);
 }
 

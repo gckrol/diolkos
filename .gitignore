@@ -5,6 +5,7 @@
 # Models, tokenizers
 *.bin
 *.model
+/models
 
 # Profiling
 perf.data

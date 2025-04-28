@@ -23,8 +23,22 @@ To generate the tokenizer.bin file, run the following:
 
 ````bash
 cd python
-python tokenizer.py --model JackFram/llama-160m --tokenizer-type LLAMA
+python tokenizer.py --model Felladrin/Llama-160M-Chat-v1 --tokenizer-type LLAMA
 ````
+
+To generate the model.bin file:
+
+````bash
+cd python
+python export.py --version 0 --hf Felladrin/Llama-160M-Chat-v1 llama-160-chat.bin
+````
+
+Now run with:
+
+````bash
+bin/plainllm python/llama-160-chat.bin -i "What is the color of the sky?"
+````
+
 
 # Old Info
 

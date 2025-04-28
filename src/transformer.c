@@ -13,25 +13,29 @@
     #include <sys/mman.h>
 #endif
 
-void malloc_run_state(RunState* s, Config* p) {
-    // we calloc instead of malloc to keep valgrind happy
-    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
-    s->x = calloc(p->dim, sizeof(float));
-    s->xb = calloc(p->dim, sizeof(float));
-    s->xb2 = calloc(p->dim, sizeof(float));
-    s->hb = calloc(p->hidden_dim, sizeof(float));
-    s->hb2 = calloc(p->hidden_dim, sizeof(float));
-    s->q = calloc(p->dim, sizeof(float));
-    s->key_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
-    s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
-    s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
-    s->logits = calloc(p->vocab_size, sizeof(float));
-    // ensure all mallocs went fine
-    if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
-     || !s->key_cache || !s->value_cache || !s->att || !s->logits) {
-        fprintf(stderr, "malloc failed!\n");
+// Utility function for safe allocation with error handling
+void* safe_calloc(size_t count, size_t size, const char* description) {
+    void* ptr = calloc(count, size);
+    if (ptr == NULL) {
+        fprintf(stderr, "Failed to allocate memory for %s (%zu bytes)\n", 
+                description, count * size);
         exit(EXIT_FAILURE);
     }
+    return ptr;
+}
+
+void malloc_run_state(RunState* s, Config* p) {
+    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+    s->x = safe_calloc(p->dim, sizeof(float), "RunState x");
+    s->xb = safe_calloc(p->dim, sizeof(float), "RunState xb");
+    s->xb2 = safe_calloc(p->dim, sizeof(float), "RunState xb2");
+    s->hb = safe_calloc(p->hidden_dim, sizeof(float), "RunState hb");
+    s->hb2 = safe_calloc(p->hidden_dim, sizeof(float), "RunState hb2");
+    s->q = safe_calloc(p->dim, sizeof(float), "RunState q");
+    s->key_cache = safe_calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float), "RunState key_cache");
+    s->value_cache = safe_calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float), "RunState value_cache");
+    s->att = safe_calloc(p->n_heads * p->seq_len, sizeof(float), "RunState att");
+    s->logits = safe_calloc(p->vocab_size, sizeof(float), "RunState logits");
 }
 
 void free_run_state(RunState* s) {
@@ -103,6 +107,10 @@ void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weigh
 void build_transformer(Transformer *t, char* checkpoint_path) {
     // read in the Config and the Weights from the checkpoint
     read_checkpoint(checkpoint_path, &t->config, &t->weights, &t->fd, &t->data, &t->file_size);
+    // print the config for debugging
+    fprintf(stderr, "Transformer config: dim=%d, hidden_dim=%d, n_layers=%d, n_heads=%d, n_kv_heads=%d, vocab_size=%d, seq_len=%d\n",
+            t->config.dim, t->config.hidden_dim, t->config.n_layers, t->config.n_heads,
+            t->config.n_kv_heads, t->config.vocab_size, t->config.seq_len);
     // allocate the RunState buffers
     malloc_run_state(&t->state, &t->config);
 }

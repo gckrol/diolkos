@@ -29,7 +29,7 @@ class Tokenizer:
                 t = t.replace('▁', ' ') # sentencepiece uses this character as whitespace
             
             # just for easier compatibility with sentencepiece tokenizers
-            s = 1.0
+            s = len(t) # Use the length of the token as the score.
             
             b = t.encode('utf-8') 
 
@@ -40,7 +40,6 @@ class Tokenizer:
         max_token_length = max(len(t) for t in tokens)
 
         with open("tokenizer.bin", 'wb') as f:
-            # f.write(struct.pack("IIII", self.n_words, max_token_length, self.bos_id, self.eos_id))
             f.write(struct.pack("IIII", len(tokens), max_token_length, self.bos_id, self.eos_id))
             i = 0
             for bytes, score in zip(tokens, scores):
