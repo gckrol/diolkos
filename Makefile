@@ -4,7 +4,7 @@ CC = clang
 
 # Source files and object files
 SRC = src/main.c src/tokenizer.c src/sampler.c src/transformer.c src/utils.c
-OBJ = $(SRC:.c=.o)
+OBJ = $(patsubst src/%.c,obj/%.o,$(SRC))
 
 .PHONY: all
 all: bin/plainllm
@@ -13,7 +13,8 @@ bin/plainllm: $(OBJ)
 	@mkdir -p bin
 	$(CC) -Ofast -march=native -g -o $@ $^ -lm
 
-%.o: %.c
+obj/%.o: src/%.c
+	@mkdir -p obj
 	$(CC) -Ofast -march=native -g -c -o $@ $<
 
 # Useful for testing - build + run with the small stories model.
@@ -25,6 +26,7 @@ run: all
 # $ valgrind --leak-check=full ./run out/model.bin -n 3
 .PHONY: debug
 debug: 
+	@mkdir -p bin
 	$(CC) -g -o bin/plainllm $(SRC) -lm
 
 # additionally compiles with OpenMP, allowing multithreaded runs
@@ -50,9 +52,10 @@ testc:
 VERBOSITY ?= 0
 .PHONY: testcc
 testcc:
+	@mkdir -p bin
 	$(CC) -DVERBOSITY=$(VERBOSITY) -O3 -o bin/testc src/test.c -lm
 	./bin/testc
 
 .PHONY: clean
 clean:
-	rm -rf bin *.o src/*.o
+	rm -rf bin obj
