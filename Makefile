@@ -3,13 +3,17 @@
 CC = clang
 
 # Source files and object files
-SRC = src/main.c src/tokenizer.c src/sampler.c src/transformer.c src/utils.c
+SRC = src/tokenizer.c src/sampler.c src/transformer.c src/utils.c src/safetensors.c
 OBJ = $(patsubst src/%.c,obj/%.o,$(SRC))
 
 .PHONY: all
-all: bin/plainllm
+all: bin/plainllm bin/stest
 
-bin/plainllm: $(OBJ)
+bin/plainllm: obj/main.o $(OBJ)
+	@mkdir -p bin
+	$(CC) -Ofast -march=native -g -o $@ $^ -lm
+
+bin/stest: obj/stest.o $(OBJ)
 	@mkdir -p bin
 	$(CC) -Ofast -march=native -g -o $@ $^ -lm
 
