@@ -17,7 +17,7 @@ typedef struct {
     unsigned char byte_pieces[512]; // stores all single-byte strings
 } Tokenizer;
 
-void build_tokenizer(Tokenizer* t, char* tokenizer_path, int vocab_size);
+void build_tokenizer(Tokenizer* t, char* tokenizer_path);
 void free_tokenizer(Tokenizer* t);
 char* decode(Tokenizer* t, int prev_token, int token);
 void safe_printf(char *piece);

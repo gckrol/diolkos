@@ -64,6 +64,7 @@ class Tokenizer:
         # the tokenizer.bin file is the same as .model file, but .bin
         tokenizer_bin = self.model_path.replace('.model', '.bin')
         with open(tokenizer_bin, 'wb') as f:
+            f.write(struct.pack("I", self.sp_model.vocab_size()))
             f.write(struct.pack("I", max_token_length))
             for bytes, score in zip(tokens, scores):
                 f.write(struct.pack("fI", score, len(bytes)))
@@ -76,3 +77,4 @@ if __name__ == "__main__":
 
     t = Tokenizer(args.tokenizer_model)
     t.export()
+    print("Saved tokenizer as", t.model_path.replace('.model', '.bin'))
