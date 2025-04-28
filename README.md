@@ -1,8 +1,23 @@
-## llama2.c
+## plainllm.c
 
-<p align="center">
-  <img src="assets/llama_cute.jpg" width="300" height="300" alt="Cute Llama">
-</p>
+This is a fork of llama2.c - stripped down, and cleaned up.
+
+Project goals:
+- High quality, plain C code
+- Runs on all devices, on Linux, especially tiny ones (RISC-V, ARM boards)
+- Uses the CPU
+- Good performance
+- Small, predictable RAM usage (no crashes while loading)
+- Starts up quickly
+- Easy to set up and use
+- Production ready (within the constraints of the hardware)
+- Easy to hack on
+
+Non goals:
+- GPU or other accelerator support - unless it's 2 lines of code.
+- Windows/MacOS support
+
+## Old Info
 
 Have you ever wanted to inference a baby [Llama 2](https://ai.meta.com/llama/) model in pure C? No? Well, now you can!
 
