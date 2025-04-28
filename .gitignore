@@ -1,6 +1,5 @@
 # Binaries
-/run
-/runq
+/bin
 
 # Models, tokenizers
 *.bin
