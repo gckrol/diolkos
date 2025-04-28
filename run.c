@@ -7,6 +7,8 @@
 #include <math.h>
 #include <string.h>
 #include <fcntl.h>
+#include <stdint.h>
+
 #if defined _WIN32
     #include "win.h"
 #else
@@ -719,6 +721,10 @@ int sample(Sampler* sampler, float* logits) {
 long time_in_ms() {
     // return time in milliseconds, for benchmarking the model speed
     struct timespec time;
+// VS Code will complain about CLOCK_REALTIME being undefined otherwise.
+#ifndef CLOCK_REALTIME
+#define CLOCK_REALTIME 0
+#endif
     clock_gettime(CLOCK_REALTIME, &time);
     return time.tv_sec * 1000 + time.tv_nsec / 1000000;
 }
