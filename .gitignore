@@ -1,5 +1,6 @@
 # Binaries
 /bin
+*.o
 
 # Models, tokenizers
 *.bin

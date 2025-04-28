@@ -2,25 +2,38 @@
 # example override to clang: make run CC=clang
 CC = clang
 
+# Source files and object files
+SRC = src/main.c src/tokenizer.c src/sampler.c src/transformer.c src/utils.c
+OBJ = $(SRC:.c=.o)
+
 .PHONY: all
-all: src/main.c
-	$(CC) -Ofast -march=native -g -o bin/plainllm src/main.c -lm
+all: bin/plainllm
+
+bin/plainllm: $(OBJ)
+	@mkdir -p bin
+	$(CC) -Ofast -march=native -g -o $@ $^ -lm
+
+%.o: %.c
+	$(CC) -Ofast -march=native -g -c -o $@ $<
 
 # Useful for testing - build + run with the small stories model.
+.PHONY: run
 run: all
 	./bin/plainllm stories15M.bin
 
 # useful for a debug build, can then e.g. analyze with valgrind, example:
 # $ valgrind --leak-check=full ./run out/model.bin -n 3
-debug: src/main.c
-	$(CC) -g -o bin/plainllm src/main.c -lm
+.PHONY: debug
+debug: 
+	$(CC) -g -o bin/plainllm $(SRC) -lm
 
 # additionally compiles with OpenMP, allowing multithreaded runs
 # make sure to also enable multiple threads when running, e.g.:
 # OMP_NUM_THREADS=4 ./run out/model.bin
 .PHONY: omp
-omp: main.c
-	$(CC) -Ofast -fopenmp -march=native src/main.c -lm -o bin/plainllm
+omp:
+	@mkdir -p bin
+	$(CC) -Ofast -fopenmp -march=native $(SRC) -lm -o bin/plainllm
 
 # run all tests
 .PHONY: test
@@ -42,4 +55,4 @@ testcc:
 
 .PHONY: clean
 clean:
-	rm -f bin
+	rm -rf bin *.o src/*.o
