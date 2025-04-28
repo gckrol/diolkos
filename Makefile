@@ -8,6 +8,12 @@ run: run.c
 	$(CC) -O3 -o run run.c -lm
 	$(CC) -O3 -o runq runq.c -lm
 
+runclang: run.c
+	$(CC) -Ofast -march=native -g -o run run.c -lm
+
+bench: runclang
+	./run stories15M.bin
+
 # useful for a debug build, can then e.g. analyze with valgrind, example:
 # $ valgrind --leak-check=full ./run out/model.bin -n 3
 rundebug: run.c
@@ -25,8 +31,8 @@ rundebug: run.c
 # In our specific application this is *probably* okay to use
 .PHONY: runfast
 runfast: run.c
-	$(CC) -Ofast -o run run.c -lm
-	$(CC) -Ofast -o runq runq.c -lm
+	$(CC) -Ofast -march=native -o run run.c -lm
+	$(CC) -Ofast -march=native -o runq runq.c -lm
 
 # additionally compiles with OpenMP, allowing multithreaded runs
 # make sure to also enable multiple threads when running, e.g.:

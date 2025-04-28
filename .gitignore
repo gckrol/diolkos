@@ -1,0 +1,12 @@
+# Binaries
+/run
+/runq
+
+# Models, tokenizers
+*.bin
+
+# Profiling
+perf.data
+
+# VS Code
+/.vscode/
