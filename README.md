@@ -17,7 +17,16 @@ Non goals:
 - GPU or other accelerator support - unless it's 2 lines of code.
 - Windows/MacOS support
 
-## Old Info
+## Running
+
+To generate the tokenizer.bin file, run the following:
+
+````bash
+cd python
+python tokenizer.py --model JackFram/llama-160m --tokenizer-type LLAMA
+````
+
+# Old Info
 
 Have you ever wanted to inference a baby [Llama 2](https://ai.meta.com/llama/) model in pure C? No? Well, now you can!
 

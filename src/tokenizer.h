@@ -15,6 +15,8 @@ typedef struct {
     int vocab_size;
     unsigned int max_token_length;
     unsigned char byte_pieces[512]; // stores all single-byte strings
+    int bos_id; // beginning of sentence token
+    int eos_id; // end of sentence token
 } Tokenizer;
 
 void build_tokenizer(Tokenizer* t, char* tokenizer_path);

@@ -15,6 +15,15 @@ void build_tokenizer(Tokenizer* t, char* tokenizer_path) {
     if (fread(&t->vocab_size, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE); }
     if (fread(&t->max_token_length, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE); }
 
+    if (fread(&t->bos_id, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE); }
+    if (fread(&t->eos_id, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE); }
+
+    // Debug info:
+    // printf("vocab size: %d\n", t->vocab_size);
+    // printf("max token length: %d\n", t->max_token_length);
+    // printf("bos id: %d\n", t->bos_id);
+    // printf("eos id: %d\n", t->eos_id);
+
     // malloc space to hold the scores and the strings
     t->vocab = (char**)malloc(t->vocab_size * sizeof(char*));
     t->vocab_scores = (float*)malloc(t->vocab_size * sizeof(float));
@@ -24,13 +33,15 @@ void build_tokenizer(Tokenizer* t, char* tokenizer_path) {
         t->byte_pieces[i * 2 + 1] = '\0';
     }
     
-
     int len;
     for (int i = 0; i < t->vocab_size; i++) {
-        if (fread(t->vocab_scores + i, sizeof(float), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE);}
-        if (fread(&len, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE); }
+        // printf("reading vocab %d\n", i);
+        if (fread(t->vocab_scores + i, sizeof(float), 1, file) != 1) { fprintf(stderr, "failed read vocab_scores %i\n", i); exit(EXIT_FAILURE);}
+        if (fread(&len, sizeof(int), 1, file) != 1) { fprintf(stderr, "failed read len %i\n", i); exit(EXIT_FAILURE); }
         t->vocab[i] = (char *)malloc(len + 1);
-        if (fread(t->vocab[i], len, 1, file) != 1) { fprintf(stderr, "failed read\n"); exit(EXIT_FAILURE); }
+        if (len > 0) { // Apparently we can have zero length tokens.
+            if (fread(t->vocab[i], len, 1, file) != 1) { fprintf(stderr, "failed read vocab %i\n", i); exit(EXIT_FAILURE); }
+        }
         t->vocab[i][len] = '\0'; // add the string terminating token
     }
     fclose(file);
