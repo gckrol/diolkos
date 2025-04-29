@@ -143,11 +143,6 @@ Safetensors *load_safetensors(const char* dir) {
         return NULL;
     }
     
-    // Store the file descriptor and mapped data
-    st->fd = fd;
-    st->data = data;
-    st->size = sb.st_size;
-    
     // Parse the header size (first 8 bytes, little endian)
     uint64_t header_size = 0;
     uint8_t *bytes = (uint8_t*)data;
@@ -156,20 +151,18 @@ Safetensors *load_safetensors(const char* dir) {
     }
     
     // Store the header size and position
-    st->header_size = header_size;
-    st->header = (char*)data + 8;
-    st->tensors = (uint8_t*)data + 8 + header_size;
+    uint8_t *tensors = (uint8_t*)data + 8 + header_size;
 
-    JSON_Value *header_value = json_parse_string(st->header);
+    JSON_Value *header_value = json_parse_string((char*)data + 8);
     JSON_Object *header = json_value_get_object(header_value);
 
     JSON_Object *lm_head = json_object_get_object(header, "lm_head.weight");
     const char *head_type = json_object_get_string(lm_head, "dtype");
 
-    // load_tensor(header, st->tensors, "lm_head.weight", config->vocab_size * config->dim);
-    st->token_embedding_table = load_tensor(header, st->tensors, "model.embed_tokens.weight", config->vocab_size * config->dim);
-    st->rms_final_weight = load_tensor(header, st->tensors, "model.norm.weight", config->dim);
-    st->wcls = load_tensor(header, st->tensors, "lm_head.weight", config->vocab_size * config->dim); // Sometimes tied to token_embedding_table!
+    // load_tensor(header, tensors, "lm_head.weight", config->vocab_size * config->dim);
+    st->token_embedding_table = load_tensor(header, tensors, "model.embed_tokens.weight", config->vocab_size * config->dim);
+    st->rms_final_weight = load_tensor(header, tensors, "model.norm.weight", config->dim);
+    st->wcls = load_tensor(header, tensors, "lm_head.weight", config->vocab_size * config->dim); // Sometimes tied to token_embedding_table!
 
     Layer *layers = malloc(config->n_layers * sizeof(Layer));
     st->layers = layers;
@@ -180,52 +173,40 @@ Safetensors *load_safetensors(const char* dir) {
         char layer_name[256];
 
         snprintf(layer_name, sizeof(layer_name), "model.layers.%d.input_layernorm.weight", i);
-        layers[i].rms_att_weight = load_tensor(header, st->tensors, layer_name, config->dim);
+        layers[i].rms_att_weight = load_tensor(header, tensors, layer_name, config->dim);
         
         // (layer, dim, n_heads * head_size)
         snprintf(layer_name, sizeof(layer_name), "model.layers.%d.self_attn.q_proj.weight", i);
-        layers[i].wq = load_tensor(header, st->tensors, layer_name, config->dim * config->dim);
+        layers[i].wq = load_tensor(header, tensors, layer_name, config->dim * config->dim);
         // Note: is permuted by hugginface
         // layers[i].wq = unpermute_weights(layers[i].wq, config->dim, config->dim, config->n_heads);
         
         // dim, n_kv_heads * head_size
         snprintf(layer_name, sizeof(layer_name), "model.layers.%d.self_attn.k_proj.weight", i);
-        layers[i].wk = load_tensor(header, st->tensors, layer_name, config->dim * config->n_kv_heads * head_size);
+        layers[i].wk = load_tensor(header, tensors, layer_name, config->dim * config->n_kv_heads * head_size);
         // Note: is permuted by hugginface
         // layers[i].wk = unpermute_weights(layers[i].wk, config->dim, config->n_kv_heads * head_size, config->n_kv_heads);
         
         snprintf(layer_name, sizeof(layer_name), "model.layers.%d.self_attn.v_proj.weight", i);
-        layers[i].wv = load_tensor(header, st->tensors, layer_name, config->dim * config->n_kv_heads * head_size);
+        layers[i].wv = load_tensor(header, tensors, layer_name, config->dim * config->n_kv_heads * head_size);
         
         snprintf(layer_name, sizeof(layer_name), "model.layers.%d.self_attn.o_proj.weight", i);
-        layers[i].wo = load_tensor(header, st->tensors, layer_name, config->dim * config->dim);
+        layers[i].wo = load_tensor(header, tensors, layer_name, config->dim * config->dim);
         
         snprintf(layer_name, sizeof(layer_name), "model.layers.%d.post_attention_layernorm.weight", i);
-        layers[i].rms_ffn_weight = load_tensor(header, st->tensors, layer_name, config->dim);
+        layers[i].rms_ffn_weight = load_tensor(header, tensors, layer_name, config->dim);
         
         snprintf(layer_name, sizeof(layer_name), "model.layers.%d.mlp.gate_proj.weight", i);
-        layers[i].w1 = load_tensor(header, st->tensors, layer_name, config->dim * config->hidden_dim);
+        layers[i].w1 = load_tensor(header, tensors, layer_name, config->dim * config->hidden_dim);
         
         snprintf(layer_name, sizeof(layer_name), "model.layers.%d.mlp.down_proj.weight", i);
-        layers[i].w2 = load_tensor(header, st->tensors, layer_name, config->dim * config->hidden_dim);
+        layers[i].w2 = load_tensor(header, tensors, layer_name, config->dim * config->hidden_dim);
         
         snprintf(layer_name, sizeof(layer_name), "model.layers.%d.mlp.up_proj.weight", i);
-        layers[i].w3 = load_tensor(header, st->tensors, layer_name, config->dim * config->hidden_dim);
+        layers[i].w3 = load_tensor(header, tensors, layer_name, config->dim * config->hidden_dim);
     }
 
     json_value_free(header_value);
 
     return st;
-}
-
-void free_safetensors(Safetensors *st) {
-    if (st) {
-        if (st->data) {
-            munmap(st->data, st->size);
-        }
-        if (st->fd != -1) {
-            close(st->fd);
-        }
-        free(st);
-    }
 }

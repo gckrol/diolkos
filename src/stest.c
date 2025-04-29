@@ -14,8 +14,5 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Free the resources
-    free_safetensors(st);
-
     return 0;
 }

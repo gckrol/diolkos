@@ -42,17 +42,6 @@ void build_transformer_from_safetensors(Transformer *t, const char* model_path) 
             t->config.n_kv_heads, t->config.vocab_size, t->config.seq_len);
 }
 
-void free_transformer_safetensors(Transformer* t) {
-    // Free the RunState buffers
-    free_run_state(&t->state);
-    
-    // Free the safetensors structure
-    if (t->safetensors) {
-        free_safetensors(t->safetensors);
-        t->safetensors = NULL;
-    }
-}
-
 float* forward_safetensors(Transformer* transformer, int token, int pos) {
     // a few convenience variables
     Config* p = &transformer->config;

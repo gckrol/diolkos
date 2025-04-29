@@ -21,12 +21,6 @@ typedef struct {
 } Layer;
 
 typedef struct Safetensors {
-    int fd;            // file descriptor
-    void *data;        // pointer to mmap'd data
-    size_t size;       // total size of the file
-    uint64_t header_size;  // size of the header in bytes
-    char *header;      // pointer to the header (JSON)
-    uint8_t *tensors;  // pointer to the start of tensor data
     Config *config; // pointer to the config struct
 
     float* token_embedding_table;    // (vocab_size, dim)
@@ -42,12 +36,5 @@ typedef struct Safetensors {
  * @return Pointer to Safetensors struct or NULL on failure
  */
 Safetensors *load_safetensors(const char* dir);
-
-/**
- * Free resources associated with a Safetensors struct
- * 
- * @param st Pointer to Safetensors struct
- */
-void free_safetensors(Safetensors *st);
 
 #endif // SAFETENSORS_H
