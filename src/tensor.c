@@ -61,16 +61,6 @@ Tensor *Tensor_create(size_t size, quantization_type type) {
     return tensor;
 }
 
-float get_f32(Tensor *tensor, size_t index) {
-    assert(tensor->type == F32);
-    return ((float*)tensor->data)[index];
-}
-
-void set_f32(Tensor *tensor, size_t index, float value) {
-    assert(tensor->type == F32);
-    ((float*)tensor->data)[index] = value;
-}
-
 float *data_f32(Tensor *tensor) {
     assert(tensor->type == F32);
     return (float*)tensor->data;

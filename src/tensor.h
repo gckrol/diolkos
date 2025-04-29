@@ -22,8 +22,6 @@ float f16_to_float(uint16_t f16);
 
 Tensor *Tensor_create(size_t size, quantization_type type);
 
-float get_f32(Tensor *tensor, size_t index);
-void set_f32(Tensor *tensor, size_t index, float value);
 float *data_f32(Tensor *tensor);
 
 #endif // TENSOR_H
