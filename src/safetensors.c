@@ -12,24 +12,6 @@
 #include "parson.h"
 #include "transformer.h"
 
-// Add at the end of unpermute_weights
-void print_tensor_sample(const char* name, float* tensor, int count) {
-    printf("Tensor %s - first %d values:\n", name, count);
-    for (int i = 0; i < count; i++) {
-        printf("  [%d] = %f\n", i, tensor[i]);
-    }
-    printf("\n");
-}
-
-void print_tensor_sum(const char* name, float* tensor, int size) {
-    float sum = 0.0f;
-    for (int i = 0; i < size; i++) {
-        sum += tensor[i];
-    }
-    printf("%s sum: %f first: %f last: %f\n", name, sum, tensor[0], tensor[size - 1]);
-}
-
-// BF16 to FP32 conversion function
 float bf16_to_float(uint16_t bf16) {
     // BF16 has the same exponent bits as FP32 but only the top 7 mantissa bits
     // To convert: put the 16 bits in the top half of a 32-bit word, clear bottom 16 bits
@@ -175,81 +157,106 @@ int process_safetensors_file(const char* filepath, Safetensors *st, Config *conf
     JSON_Value *header_value = json_parse_string((char*)data + 8);
     JSON_Object *header = json_value_get_object(header_value);
     
-    // Try to load each tensor - if it exists in this file, we'll load it
-    // Token embedding
-    if (json_object_has_value(header, "model.embed_tokens.weight") && st->token_embedding_table == NULL) {
-        st->token_embedding_table = load_tensor(header, tensors, "model.embed_tokens.weight", config->vocab_size * config->dim);
-        tensors_found++;
-    }
-    
-    // Final norm and classifier
-    if (json_object_has_value(header, "model.norm.weight") && st->rms_final_weight == NULL) {
-        st->rms_final_weight = load_tensor(header, tensors, "model.norm.weight", config->dim);
-        tensors_found++;
-    }
-    
-    if (json_object_has_value(header, "lm_head.weight") && st->wcls == NULL) {
-        st->wcls = load_tensor(header, tensors, "lm_head.weight", config->vocab_size * config->dim);
-        tensors_found++;
-    }
-    
-    // Load all layer tensors that exist in this file
-    for (int i = 0; i < config->n_layers; i++) {
-        char layer_name[256];
-
-        // Try to load each layer component
-        snprintf(layer_name, sizeof(layer_name), "model.layers.%d.input_layernorm.weight", i);
-        if (json_object_has_value(header, layer_name) && layers[i].rms_att_weight == NULL) {
-            layers[i].rms_att_weight = load_tensor(header, tensors, layer_name, config->dim);
+    // First, iterate over all tensors in the file
+    size_t count = json_object_get_count(header);
+    for (size_t j = 0; j < count; j++) {
+        const char *tensor_name = json_object_get_name(header, j);
+        
+        // Check for token embedding
+        if (strcmp(tensor_name, "model.embed_tokens.weight") == 0 && st->token_embedding_table == NULL) {
+            st->token_embedding_table = load_tensor(header, tensors, tensor_name, config->vocab_size * config->dim);
             tensors_found++;
+            continue;
         }
         
-        snprintf(layer_name, sizeof(layer_name), "model.layers.%d.self_attn.q_proj.weight", i);
-        if (json_object_has_value(header, layer_name) && layers[i].wq == NULL) {
-            layers[i].wq = load_tensor(header, tensors, layer_name, config->dim * config->dim);
+        // Check for final norm
+        if (strcmp(tensor_name, "model.norm.weight") == 0 && st->rms_final_weight == NULL) {
+            st->rms_final_weight = load_tensor(header, tensors, tensor_name, config->dim);
             tensors_found++;
+            continue;
         }
         
-        snprintf(layer_name, sizeof(layer_name), "model.layers.%d.self_attn.k_proj.weight", i);
-        if (json_object_has_value(header, layer_name) && layers[i].wk == NULL) {
-            layers[i].wk = load_tensor(header, tensors, layer_name, config->dim * config->n_kv_heads * head_size);
+        // Check for classifier
+        if (strcmp(tensor_name, "lm_head.weight") == 0 && st->wcls == NULL) {
+            st->wcls = load_tensor(header, tensors, tensor_name, config->vocab_size * config->dim);
             tensors_found++;
+            continue;
         }
         
-        snprintf(layer_name, sizeof(layer_name), "model.layers.%d.self_attn.v_proj.weight", i);
-        if (json_object_has_value(header, layer_name) && layers[i].wv == NULL) {
-            layers[i].wv = load_tensor(header, tensors, layer_name, config->dim * config->n_kv_heads * head_size);
-            tensors_found++;
-        }
-        
-        snprintf(layer_name, sizeof(layer_name), "model.layers.%d.self_attn.o_proj.weight", i);
-        if (json_object_has_value(header, layer_name) && layers[i].wo == NULL) {
-            layers[i].wo = load_tensor(header, tensors, layer_name, config->dim * config->dim);
-            tensors_found++;
-        }
-        
-        snprintf(layer_name, sizeof(layer_name), "model.layers.%d.post_attention_layernorm.weight", i);
-        if (json_object_has_value(header, layer_name) && layers[i].rms_ffn_weight == NULL) {
-            layers[i].rms_ffn_weight = load_tensor(header, tensors, layer_name, config->dim);
-            tensors_found++;
-        }
-        
-        snprintf(layer_name, sizeof(layer_name), "model.layers.%d.mlp.gate_proj.weight", i);
-        if (json_object_has_value(header, layer_name) && layers[i].w1 == NULL) {
-            layers[i].w1 = load_tensor(header, tensors, layer_name, config->dim * config->hidden_dim);
-            tensors_found++;
-        }
-        
-        snprintf(layer_name, sizeof(layer_name), "model.layers.%d.mlp.down_proj.weight", i);
-        if (json_object_has_value(header, layer_name) && layers[i].w2 == NULL) {
-            layers[i].w2 = load_tensor(header, tensors, layer_name, config->dim * config->hidden_dim);
-            tensors_found++;
-        }
-        
-        snprintf(layer_name, sizeof(layer_name), "model.layers.%d.mlp.up_proj.weight", i);
-        if (json_object_has_value(header, layer_name) && layers[i].w3 == NULL) {
-            layers[i].w3 = load_tensor(header, tensors, layer_name, config->dim * config->hidden_dim);
-            tensors_found++;
+        // Check for layer tensors using prefix matching
+        const char *layer_prefix = "model.layers.";
+        if (strncmp(tensor_name, layer_prefix, strlen(layer_prefix)) == 0) {
+            // Extract the layer index
+            int layer_idx = -1;
+            char component[256];
+            if (sscanf(tensor_name + strlen(layer_prefix), "%d.%255s", &layer_idx, component) == 2) {
+                if (layer_idx >= 0 && layer_idx < config->n_layers) {
+                    // Match different layer component patterns
+                    
+                    // Input layernorm
+                    if (strcmp(component, "input_layernorm.weight") == 0 && layers[layer_idx].rms_att_weight == NULL) {
+                        layers[layer_idx].rms_att_weight = load_tensor(header, tensors, tensor_name, config->dim);
+                        tensors_found++;
+                        continue;
+                    }
+                    
+                    // Q projection
+                    if (strcmp(component, "self_attn.q_proj.weight") == 0 && layers[layer_idx].wq == NULL) {
+                        layers[layer_idx].wq = load_tensor(header, tensors, tensor_name, config->dim * config->dim);
+                        tensors_found++;
+                        continue;
+                    }
+                    
+                    // K projection
+                    if (strcmp(component, "self_attn.k_proj.weight") == 0 && layers[layer_idx].wk == NULL) {
+                        layers[layer_idx].wk = load_tensor(header, tensors, tensor_name, config->dim * config->n_kv_heads * head_size);
+                        tensors_found++;
+                        continue;
+                    }
+                    
+                    // V projection
+                    if (strcmp(component, "self_attn.v_proj.weight") == 0 && layers[layer_idx].wv == NULL) {
+                        layers[layer_idx].wv = load_tensor(header, tensors, tensor_name, config->dim * config->n_kv_heads * head_size);
+                        tensors_found++;
+                        continue;
+                    }
+                    
+                    // O projection
+                    if (strcmp(component, "self_attn.o_proj.weight") == 0 && layers[layer_idx].wo == NULL) {
+                        layers[layer_idx].wo = load_tensor(header, tensors, tensor_name, config->dim * config->dim);
+                        tensors_found++;
+                        continue;
+                    }
+                    
+                    // Post attention layernorm
+                    if (strcmp(component, "post_attention_layernorm.weight") == 0 && layers[layer_idx].rms_ffn_weight == NULL) {
+                        layers[layer_idx].rms_ffn_weight = load_tensor(header, tensors, tensor_name, config->dim);
+                        tensors_found++;
+                        continue;
+                    }
+                    
+                    // MLP gate projection
+                    if (strcmp(component, "mlp.gate_proj.weight") == 0 && layers[layer_idx].w1 == NULL) {
+                        layers[layer_idx].w1 = load_tensor(header, tensors, tensor_name, config->dim * config->hidden_dim);
+                        tensors_found++;
+                        continue;
+                    }
+                    
+                    // MLP down projection
+                    if (strcmp(component, "mlp.down_proj.weight") == 0 && layers[layer_idx].w2 == NULL) {
+                        layers[layer_idx].w2 = load_tensor(header, tensors, tensor_name, config->dim * config->hidden_dim);
+                        tensors_found++;
+                        continue;
+                    }
+                    
+                    // MLP up projection
+                    if (strcmp(component, "mlp.up_proj.weight") == 0 && layers[layer_idx].w3 == NULL) {
+                        layers[layer_idx].w3 = load_tensor(header, tensors, tensor_name, config->dim * config->hidden_dim);
+                        tensors_found++;
+                        continue;
+                    }
+                }
+            }
         }
     }
     
