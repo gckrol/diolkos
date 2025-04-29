@@ -52,3 +52,33 @@ void matmul(float* xout, float* x, float* w, int n, int d) {
         xout[i] = val;
     }
 }
+
+void matmul_permuted(float* xout, float* x, float* w, int n, int d, int n_heads) {
+    // For permuted weights from HuggingFace format
+    // Original permutation: reshape(n_heads, dim1/n_heads/2, 2, dim2).transpose(1,2)
+    
+    int head_dim = d / n_heads;  // dimension per head
+    int block_size = head_dim / 2;  // half of the head dimension
+    
+    #pragma omp parallel for
+    for (int h = 0; h < n_heads; h++) {
+        for (int i = 0; i < head_dim; i++) {
+            float val = 0.0f;
+            // Determine which block we're in (0 or 1)
+            int block = i / block_size;
+            // Position within the block
+            int pos = i % block_size;
+            
+            // Calculate the offset in the weight matrix accounting for permutation
+            int row_offset = h * head_dim + block * block_size + pos;
+            
+            for (int j = 0; j < n; j++) {
+                // Access weights with the permuted indexing
+                val += w[row_offset * n + j] * x[j];
+            }
+            
+            // Store result
+            xout[h * head_dim + i] = val;
+        }
+    }
+}

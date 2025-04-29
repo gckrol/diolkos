@@ -5,5 +5,6 @@
 void softmax(float* x, int size);
 float* rmsnorm(float* o, float* x, float* weight, int size);
 void matmul(float* xout, float* x, float* w, int n, int d);
+void matmul_permuted(float* xout, float* x, float* w, int n, int d, int n_heads);
 
 #endif // UTILS_H

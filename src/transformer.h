@@ -1,8 +1,12 @@
 #ifndef TRANSFORMER_H
 #define TRANSFORMER_H
 
+#include <stddef.h>
 #include <stdint.h>
 #include <sys/types.h>
+
+// Forward declaration for Safetensors struct
+typedef struct Safetensors Safetensors;
 
 typedef struct {
     int dim; // transformer dimension
@@ -60,8 +64,16 @@ typedef struct {
     int fd; // file descriptor for memory mapping
     float* data; // memory mapped data pointer
     ssize_t file_size; // size of the checkpoint file in bytes
+    // pointer to safetensors if using that format
+    Safetensors* safetensors;
 } Transformer;
 
+// Functions for direct checkpoint loading
+void malloc_run_state(RunState* s, Config* p);
+void free_run_state(RunState* s);
+void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared_weights);
+void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weights,
+                    int* fd, float** data, ssize_t* file_size);
 void build_transformer(Transformer *t, char* checkpoint_path);
 void free_transformer(Transformer* t);
 float* forward(Transformer* transformer, int token, int pos);

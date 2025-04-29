@@ -14,12 +14,6 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // Print the header size and contents
-    printf("Header size: %lu bytes\n", st->header_size);
-    printf("Header contents:\n");
-    fwrite(st->header, 1, st->header_size, stdout);
-    printf("\n");
-
     // Free the resources
     free_safetensors(st);
 

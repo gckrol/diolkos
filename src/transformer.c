@@ -1,4 +1,5 @@
 #include "transformer.h"
+#include "transformer_safetensors.h"
 #include "utils.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -124,6 +125,9 @@ void free_transformer(Transformer* t) {
 }
 
 float* forward(Transformer* transformer, int token, int pos) {
+    if (transformer->safetensors) {
+        return forward_safetensors(transformer, token, pos);
+    }
 
     // a few convenience variables
     Config* p = &transformer->config;
