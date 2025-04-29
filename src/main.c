@@ -160,10 +160,15 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
             } else {
                 // char user_template[] = "[INST] %s [/INST]";
                 // For Felladrin/Llama-160M-Chat-v1:
+//                 char user_template[] =
+// "<|im_start|>user\n\
+// %s<|im_end|>\n\
+// <|im_start|>assistant\n";
+                // For TinyLlama
                 char user_template[] =
-"<|im_start|>user\n\
-%s<|im_end|>\n\
-<|im_start|>assistant\n";
+"<|user|>\n\
+%s</s>\n\
+<|assistant|>\n";
                 sprintf(rendered_prompt, user_template, user_prompt);
             }
             // printf("Prompt: %s\n", rendered_prompt);
@@ -235,6 +240,9 @@ int main(int argc, char *argv[]) {
     unsigned long long rng_seed = 0; // seed rng with time by default
     char *mode = "generate";    // generate|chat
     char *system_prompt = NULL; // the (optional) system prompt to use in chat mode
+    
+    // Start timing for initialization
+    long start_time = time_in_ms();
 
     // poor man's C argparse so we can override the defaults above from the command line
     if (argc >= 2) { checkpoint_path = argv[1]; } else { error_usage(); }
@@ -274,6 +282,10 @@ int main(int argc, char *argv[]) {
     // build the Sampler
     Sampler sampler;
     build_sampler(&sampler, transformer.config.vocab_size, temperature, topp, rng_seed);
+
+    // Print elapsed initialization time
+    long end_time = time_in_ms();
+    fprintf(stderr, "Initialization took %ld ms\n", (end_time - start_time));
 
     // run!
     if (strcmp(mode, "generate") == 0) {
