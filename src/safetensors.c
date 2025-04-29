@@ -287,12 +287,13 @@ Safetensors *load_safetensors(const char* dir) {
 
     ///////////////
     // Allocate the Safetensors struct
-    Safetensors *st = (Safetensors*)malloc(sizeof(Safetensors));
+    Safetensors *st = calloc(1, sizeof(Safetensors));
     if (st == NULL) {
         fprintf(stderr, "Failed to allocate memory for Safetensors struct\n");
         return NULL;
     }
     st->config = config;
+    st->huggingface_rope = true;
 
     // Initialize layers
     Layer *layers = malloc(config->n_layers * sizeof(Layer));

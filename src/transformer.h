@@ -74,7 +74,7 @@ void free_run_state(RunState* s);
 void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared_weights);
 void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weights,
                     int* fd, float** data, ssize_t* file_size);
-void build_transformer(Transformer *t, char* checkpoint_path);
+void build_transformer_from_safetensors(Transformer *t, const char* model_path);
 void free_transformer(Transformer* t);
 float* forward(Transformer* transformer, int token, int pos);
 

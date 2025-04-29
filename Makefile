@@ -3,7 +3,7 @@
 CC = clang
 
 # Source files and object files
-SRC = src/tokenizer.c src/sampler.c src/transformer.c src/utils.c src/safetensors.c src/parson.c src/transformer_safetensors.c
+SRC = src/tokenizer.c src/sampler.c src/transformer.c src/utils.c src/safetensors.c src/parson.c
 OBJ = $(patsubst src/%.c,obj/%.o,$(SRC))
 
 .PHONY: all

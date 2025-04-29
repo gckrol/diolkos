@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 
 #include "transformer.h"
 
@@ -22,6 +23,7 @@ typedef struct {
 
 typedef struct Safetensors {
     Config *config; // pointer to the config struct
+    bool huggingface_rope; // true if using huggingface style RoPE
 
     float* token_embedding_table;    // (vocab_size, dim)
     Layer *layers;     // array of layers

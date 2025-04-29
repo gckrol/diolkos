@@ -1,18 +1,14 @@
-#include "transformer.h"
-#include "transformer_safetensors.h"
-#include "utils.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 #include <fcntl.h>
+#include <unistd.h>
+#include <sys/mman.h>
 
-#if defined _WIN32
-    #include "win.h"
-#else
-    #include <unistd.h>
-    #include <sys/mman.h>
-#endif
+#include "transformer.h"
+#include "utils.h"
+#include "safetensors.h"
 
 // Utility function for safe allocation with error handling
 void* safe_calloc(size_t count, size_t size, const char* description) {
@@ -52,103 +48,58 @@ void free_run_state(RunState* s) {
     free(s->value_cache);
 }
 
-void memory_map_weights(TransformerWeights *w, Config* p, float* ptr, int shared_weights) {
-    int head_size = p->dim / p->n_heads;
-    // make sure the multiplications below are done in 64bit to fit the parameter counts of 13B+ models
-    unsigned long long n_layers = p->n_layers;
-    w->token_embedding_table = ptr;
-    ptr += p->vocab_size * p->dim;
-    w->rms_att_weight = ptr;
-    ptr += n_layers * p->dim;
-    w->wq = ptr;
-    ptr += n_layers * p->dim * (p->n_heads * head_size);
-    w->wk = ptr;
-    ptr += n_layers * p->dim * (p->n_kv_heads * head_size);
-    w->wv = ptr;
-    ptr += n_layers * p->dim * (p->n_kv_heads * head_size);
-    w->wo = ptr;
-    ptr += n_layers * (p->n_heads * head_size) * p->dim;
-    w->rms_ffn_weight = ptr;
-    ptr += n_layers * p->dim;
-    w->w1 = ptr;
-    ptr += n_layers * p->dim * p->hidden_dim;
-    w->w2 = ptr;
-    ptr += n_layers * p->hidden_dim * p->dim;
-    w->w3 = ptr;
-    ptr += n_layers * p->dim * p->hidden_dim;
-    w->rms_final_weight = ptr;
-    ptr += p->dim;
-    ptr += p->seq_len * head_size / 2; // skip what used to be freq_cis_real (for RoPE)
-    ptr += p->seq_len * head_size / 2; // skip what used to be freq_cis_imag (for RoPE)
-    w->wcls = shared_weights ? w->token_embedding_table : ptr;
-}
-
-void read_checkpoint(char* checkpoint, Config* config, TransformerWeights* weights,
-                     int* fd, float** data, ssize_t* file_size) {
-    FILE *file = fopen(checkpoint, "rb");
-    if (!file) { fprintf(stderr, "Couldn't open file %s\n", checkpoint); exit(EXIT_FAILURE); }
-    // read in the config header
-    if (fread(config, sizeof(Config), 1, file) != 1) { exit(EXIT_FAILURE); }
-    // negative vocab size is hacky way of signaling unshared weights. bit yikes.
-    int shared_weights = config->vocab_size > 0 ? 1 : 0;
-    config->vocab_size = abs(config->vocab_size);
-    // figure out the file size
-    fseek(file, 0, SEEK_END); // move file pointer to end of file
-    *file_size = ftell(file); // get the file size, in bytes
-    fclose(file);
-    // memory map the Transformer weights into the data pointer
-    *fd = open(checkpoint, O_RDONLY); // open in read only mode
-    if (*fd == -1) { fprintf(stderr, "open failed!\n"); exit(EXIT_FAILURE); }
-    *data = mmap(NULL, *file_size, PROT_READ, MAP_PRIVATE, *fd, 0);
-    if (*data == MAP_FAILED) { fprintf(stderr, "mmap failed!\n"); exit(EXIT_FAILURE); }
-    float* weights_ptr = *data + sizeof(Config)/sizeof(float);
-    memory_map_weights(weights, config, weights_ptr, shared_weights);
-}
-
-void build_transformer(Transformer *t, char* checkpoint_path) {
-    // read in the Config and the Weights from the checkpoint
-    read_checkpoint(checkpoint_path, &t->config, &t->weights, &t->fd, &t->data, &t->file_size);
-    // print the config for debugging
-    fprintf(stderr, "Transformer config: dim=%d, hidden_dim=%d, n_layers=%d, n_heads=%d, n_kv_heads=%d, vocab_size=%d, seq_len=%d\n",
+void build_transformer_from_safetensors(Transformer *t, const char* model_path) {
+    // Load the safetensors model
+    Safetensors *st = load_safetensors(model_path);
+    if (!st) {
+        fprintf(stderr, "Failed to load safetensors model from %s\n", model_path);
+        exit(EXIT_FAILURE);
+    }
+    
+    // Copy the config from safetensors
+    memcpy(&t->config, st->config, sizeof(Config));
+    
+    // Set up the transformer weights mapping to safetensors data
+    t->weights.token_embedding_table = st->token_embedding_table;
+    t->weights.rms_final_weight = st->rms_final_weight;
+    t->weights.wcls = st->wcls;
+    
+    // Point to the safetensors structure for later use
+    t->safetensors = st;
+    
+    // Allocate the RunState buffers
+    malloc_run_state(&t->state, &t->config);
+    
+    // Print the config for debugging
+    fprintf(stderr, "Transformer config from safetensors: dim=%d, hidden_dim=%d, n_layers=%d, n_heads=%d, n_kv_heads=%d, vocab_size=%d, seq_len=%d\n",
             t->config.dim, t->config.hidden_dim, t->config.n_layers, t->config.n_heads,
             t->config.n_kv_heads, t->config.vocab_size, t->config.seq_len);
-    // allocate the RunState buffers
-    malloc_run_state(&t->state, &t->config);
-}
-
-void free_transformer(Transformer* t) {
-    // close the memory mapping
-    if (t->data != MAP_FAILED) { munmap(t->data, t->file_size); }
-    if (t->fd != -1) { close(t->fd); }
-    // free the RunState buffers
-    free_run_state(&t->state);
 }
 
 float* forward(Transformer* transformer, int token, int pos) {
-    if (transformer->safetensors) {
-        return forward_safetensors(transformer, token, pos);
-    }
-
     // a few convenience variables
     Config* p = &transformer->config;
-    TransformerWeights* w = &transformer->weights;
+    Safetensors* st = transformer->safetensors;
     RunState* s = &transformer->state;
     float *x = s->x;
     int dim = p->dim;
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
     int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
-    int hidden_dim =  p->hidden_dim;
+    int hidden_dim = p->hidden_dim;
     int head_size = dim / p->n_heads;
+    int attention_dim = p->n_heads * head_size;
 
     // copy the token embedding into x
-    float* content_row = w->token_embedding_table + token * dim;
+    float* content_row = st->token_embedding_table + token * dim;
     memcpy(x, content_row, dim*sizeof(*x));
 
     // forward all the layers
     for(unsigned long long l = 0; l < p->n_layers; l++) {
+        // access the layer weights
+        Layer *layer = &st->layers[l];
 
         // attention rmsnorm
-        rmsnorm(s->xb, x, w->rms_att_weight + l*dim, dim);
+        rmsnorm(s->xb, x, layer->rms_att_weight, dim);
 
         // key and value point to the kv cache
         int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
@@ -156,26 +107,62 @@ float* forward(Transformer* transformer, int token, int pos) {
         s->v = s->value_cache + loff + pos * kv_dim;
 
         // qkv matmuls for this position
-        matmul(s->q, s->xb, w->wq + l*dim*dim, dim, dim);
-        matmul(s->k, s->xb, w->wk + l*dim*kv_dim, dim, kv_dim);
-        matmul(s->v, s->xb, w->wv + l*dim*kv_dim, dim, kv_dim);
+        matmul(s->q, s->xb, layer->wq, dim, attention_dim);
+        matmul(s->k, s->xb, layer->wk, dim, kv_dim);
+        matmul(s->v, s->xb, layer->wv, dim, kv_dim);
 
-        // RoPE relative positional encoding: complex-valued rotate q and k in each head
-        for (int i = 0; i < dim; i+=2) {
-            int head_dim = i % head_size;
-            float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-            float val = pos * freq;
-            float fcr = cosf(val);
-            float fci = sinf(val);
-            int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
-            for (int v = 0; v < rotn; v++) {
-                float* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
-                float v0 = vec[i];
-                float v1 = vec[i+1];
-                vec[i]   = v0 * fcr - v1 * fci;
-                vec[i+1] = v0 * fci + v1 * fcr;
+        if (st->huggingface_rope) {
+            // RoPE relative positional encoding: using complex number rotation like in lm.rs
+            for (int i = 0; i < p->n_heads; i++) {
+                for (int j = 0; j < head_size/2; j++) {
+                    int head_dim = j * 2;
+                    float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+                    float val = pos * freq;
+                    float fcr = cosf(val);
+                    float fci = sinf(val);
+                    
+                    // Calculate indices for the first and second element in each pair
+                    int q_idx1 = (i * head_size) + j;
+                    int q_idx2 = (i * head_size) + j + (head_size/2);
+                    
+                    // For query vector - apply complex number rotation
+                    float q0 = s->q[q_idx1];
+                    float q1 = s->q[q_idx2];
+                    s->q[q_idx1] = q0 * fcr - q1 * fci;
+                    s->q[q_idx2] = q0 * fci + q1 * fcr;
+                    
+                    // For key vector - check if this head's key part is within kv_dim
+                    // This is equivalent to the "rotn" logic in the Rust code
+                    if ((i*head_size) + j + (head_size/2) < kv_dim) {
+                        int k_idx1 = (i * head_size) + j;
+                        int k_idx2 = (i * head_size) + j + (head_size/2);
+                        
+                        float k0 = s->k[k_idx1];
+                        float k1 = s->k[k_idx2];
+                        s->k[k_idx1] = k0 * fcr - k1 * fci;
+                        s->k[k_idx2] = k0 * fci + k1 * fcr;
+                    }
+                }
             }
+        } else {
+            // Normal llama.cpp, llama2.c or lm.rs rope calculation.
+            for (int i = 0; i < dim; i+=2) {
+                int head_dim = i % head_size;
+                float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+                float val = pos * freq;
+                float fcr = cosf(val);
+                float fci = sinf(val);
+                int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
+                for (int v = 0; v < rotn; v++) {
+                    float* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
+                    float v0 = vec[i];
+                    float v1 = vec[i+1];
+                    vec[i]   = v0 * fcr - v1 * fci;
+                    vec[i+1] = v0 * fci + v1 * fcr;
+                }
+            }            
         }
+
 
         // multihead attention. iterate over all heads
         int h;
@@ -218,7 +205,7 @@ float* forward(Transformer* transformer, int token, int pos) {
         }
 
         // final matmul to get the output of the attention
-        matmul(s->xb2, s->xb, w->wo + l*dim*dim, dim, dim);
+        matmul(s->xb2, s->xb, layer->wo, dim, dim);
 
         // residual connection back into x
         for (int i = 0; i < dim; i++) {
@@ -226,12 +213,12 @@ float* forward(Transformer* transformer, int token, int pos) {
         }
 
         // ffn rmsnorm
-        rmsnorm(s->xb, x, w->rms_ffn_weight + l*dim, dim);
+        rmsnorm(s->xb, x, layer->rms_ffn_weight, dim);
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        matmul(s->hb, s->xb, w->w1 + l*dim*hidden_dim, dim, hidden_dim);
-        matmul(s->hb2, s->xb, w->w3 + l*dim*hidden_dim, dim, hidden_dim);
+        matmul(s->hb, s->xb, layer->w1, dim, hidden_dim);
+        matmul(s->hb2, s->xb, layer->w3, dim, hidden_dim);
 
         // SwiGLU non-linearity
         for (int i = 0; i < hidden_dim; i++) {
@@ -244,7 +231,7 @@ float* forward(Transformer* transformer, int token, int pos) {
         }
 
         // final matmul to get the output of the ffn
-        matmul(s->xb, s->hb, w->w2 + l*dim*hidden_dim, hidden_dim, dim);
+        matmul(s->xb, s->hb, layer->w2, hidden_dim, dim);
 
         // residual connection
         for (int i = 0; i < dim; i++) {
@@ -253,9 +240,9 @@ float* forward(Transformer* transformer, int token, int pos) {
     }
 
     // final rmsnorm
-    rmsnorm(x, x, w->rms_final_weight, dim);
+    rmsnorm(x, x, st->rms_final_weight, dim);
 
     // classifier into logits
-    matmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
+    matmul(s->logits, x, st->wcls, p->dim, p->vocab_size);
     return s->logits;
 }

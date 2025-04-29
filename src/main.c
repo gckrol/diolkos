@@ -20,7 +20,6 @@
 #include "transformer.h"
 #include "tokenizer.h"
 #include "sampler.h"
-#include "transformer_safetensors.h"
 
 // ----------------------------------------------------------------------------
 // utilities: time
@@ -271,7 +270,6 @@ int main(int argc, char *argv[]) {
 
     // build the Transformer via the model .bin file
     Transformer transformer;
-    // build_transformer(&transformer, checkpoint_path);
     build_transformer_from_safetensors(&transformer, checkpoint_path);
     if (steps == 0 || steps > transformer.config.seq_len) steps = transformer.config.seq_len; // override to ~max length
 
@@ -296,11 +294,6 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "unknown mode: %s\n", mode);
         error_usage();
     }
-
-    // memory and file handles cleanup
-    free_sampler(&sampler);
-    free_tokenizer(&tokenizer);
-    free_transformer(&transformer);
     return 0;
 }
 #endif
