@@ -61,7 +61,7 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
     int attention_dim = p->n_heads * head_size;
 
     // copy the token embedding into x
-    float* content_row = (float*)(st->token_embedding_table->data) + token * dim;
+    float* content_row = data_f32(st->token_embedding_table) + token * dim;
     memcpy(x->data, content_row, dim*sizeof(float));
 
     // forward all the layers
@@ -76,8 +76,8 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
         int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
 
         // Slice these from the kv cache.
-        Tensor k = { .data = (float*)s->key_cache->data + loff + pos * kv_dim, .type = F32 };
-        Tensor v = { .data = (float*)s->value_cache->data + loff + pos * kv_dim, .type = F32 };
+        Tensor k = { .data = data_f32(s->key_cache) + loff + pos * kv_dim, .type = F32 };
+        Tensor v = { .data = data_f32(s->value_cache) + loff + pos * kv_dim, .type = F32 };
 
         // qkv matmuls for this position
         matmul(s->q, s->xb, layer->wq, dim, attention_dim);
@@ -99,10 +99,10 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
                     int q_idx2 = (i * head_size) + j + (head_size/2);
                     
                     // For query vector - apply complex number rotation
-                    float q0 = get_float(s->q, q_idx1);
-                    float q1 = get_float(s->q, q_idx2);
-                    set_float(s->q, q_idx1, q0 * fcr - q1 * fci);
-                    set_float(s->q, q_idx2, q0 * fci + q1 * fcr);
+                    float q0 = data_f32(s->q)[q_idx1];
+                    float q1 = data_f32(s->q)[q_idx2];
+                    data_f32(s->q)[q_idx1] = q0 * fcr - q1 * fci;
+                    data_f32(s->q)[q_idx2] = q0 * fci + q1 * fcr;
                     
                     // For key vector - check if this head's key part is within kv_dim
                     // This is equivalent to the "rotn" logic in the Rust code
@@ -110,10 +110,10 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
                         int k_idx1 = (i * head_size) + j;
                         int k_idx2 = (i * head_size) + j + (head_size/2);
                         
-                        float k0 = get_float(&k, k_idx1);
-                        float k1 = get_float(&k, k_idx2);
-                        set_float(&k, k_idx1, k0 * fcr - k1 * fci);
-                        set_float(&k, k_idx2, k0 * fci + k1 * fcr);
+                        float k0 = data_f32(&k)[k_idx1];
+                        float k1 = data_f32(&k)[k_idx2];
+                        data_f32(&k)[k_idx1] = k0 * fcr - k1 * fci;
+                        data_f32(&k)[k_idx2] = k0 * fci + k1 * fcr;
                     }
                 }
             }
@@ -128,10 +128,10 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
                 int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
                 for (int v = 0; v < rotn; v++) {
                     Tensor* vec = v == 0 ? s->q : &k; // the vector to rotate (query or key)
-                    float v0 = get_float(vec, i);
-                    float v1 = get_float(vec, i+1);
-                    set_float(vec, i, v0 * fcr - v1 * fci);
-                    set_float(vec, i+1, v0 * fci + v1 * fcr);
+                    float v0 = data_f32(vec)[i];
+                    float v1 = data_f32(vec)[i+1];
+                    data_f32(vec)[i] = v0 * fcr - v1 * fci;
+                    data_f32(vec)[i+1] = v0 * fci + v1 * fcr;
                 }
             }            
         }
@@ -142,13 +142,13 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
         #pragma omp parallel for private(h)
         for (h = 0; h < p->n_heads; h++) {
             // get the query vector for this head
-            float* q = (float*)s->q->data + h * head_size;
+            float* q = data_f32(s->q) + h * head_size;
             // attention scores for this head
-            float* att = (float*)s->att->data + h * p->seq_len;
+            float* att = data_f32(s->att) + h * p->seq_len;
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos; t++) {
                 // get the key vector for this head and at this timestep
-                float* k = (float*)s->key_cache->data + loff + t * kv_dim + (h / kv_mul) * head_size;
+                float* k = data_f32(s->key_cache) + loff + t * kv_dim + (h / kv_mul) * head_size;
                 // calculate the attention score as the dot product of q and k
                 float score = 0.0f;
                 for (int i = 0; i < head_size; i++) {
@@ -163,11 +163,11 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
             softmax_f32(att, pos + 1);
 
             // weighted sum of the values, store back into xb
-            float* xb = (float*)s->xb->data + h * head_size;
+            float* xb = data_f32(s->xb) + h * head_size;
             memset(xb, 0, head_size * sizeof(float));
             for (int t = 0; t <= pos; t++) {
                 // get the value vector for this head and at this timestep
-                float* v = (float*)s->value_cache->data + loff + t * kv_dim + (h / kv_mul) * head_size;
+                float* v = data_f32(s->value_cache) + loff + t * kv_dim + (h / kv_mul) * head_size;
                 // get the attention weight for this timestep
                 float a = att[t];
                 // accumulate the weighted value into xb
@@ -182,7 +182,7 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
 
         // residual connection back into x
         for (int i = 0; i < dim; i++) {
-            ((float*)x->data)[i] += get_float(s->xb2, i);
+            data_f32(x)[i] += data_f32(s->xb2)[i];
         }
 
         // ffn rmsnorm
@@ -195,12 +195,12 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
 
         // SwiGLU non-linearity
         for (int i = 0; i < hidden_dim; i++) {
-            float val = get_float(s->hb, i);
+            float val = data_f32(s->hb)[i];
             // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
             val *= (1.0f / (1.0f + expf(-val)));
             // elementwise multiply with w3(x)
-            val *= get_float(s->hb2, i);
-            set_float(s->hb, i, val);
+            val *= data_f32(s->hb2)[i];
+            data_f32(s->hb)[i] = val;
         }
 
         // final matmul to get the output of the ffn
@@ -208,7 +208,7 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
 
         // residual connection
         for (int i = 0; i < dim; i++) {
-            ((float*)x->data)[i] += get_float(s->xb, i);
+            data_f32(x)[i] += data_f32(s->xb)[i];
         }
     }
 
