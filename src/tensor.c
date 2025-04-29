@@ -61,6 +61,12 @@ Tensor *Tensor_create(size_t size, quantization_type type) {
     return tensor;
 }
 
+void slice(Tensor *dest, Tensor *src, int start) {
+    dest->type = src->type;
+    dest->data = (TensorData*)((char*)src->data + start * quant_size(src->type));
+    dest->scale = src->scale ? (float*)src->scale + start / 32 : NULL; // TODO group size for quant.
+}
+
 float *data_f32(Tensor *tensor) {
     assert(tensor->type == F32);
     return (float*)tensor->data;

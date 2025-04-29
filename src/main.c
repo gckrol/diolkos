@@ -67,7 +67,7 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
             next = prompt_tokens[pos + 1];
         } else {
             // otherwise sample the next token from the logits
-            next = sample(sampler, logits->data);
+            next = sample(sampler, data_f32(logits));
         }
         pos++;
 
@@ -191,7 +191,7 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
 
         // forward the transformer to get logits for the next token
         Tensor* logits = forward(transformer, token, pos);
-        next = sample(sampler, logits->data);
+        next = sample(sampler, data_f32(logits));
         pos++;
 
         if (user_idx >= num_prompt_tokens && next != 2) {

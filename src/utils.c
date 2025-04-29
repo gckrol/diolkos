@@ -4,7 +4,7 @@
 #include "tensor.h"
 
 void softmax(Tensor* xt, int size) {
-    float *x = xt->data;
+    float *x = data_f32(xt);
     // find max value (for numerical stability)
     float max_val = x[0];
     for (int i = 1; i < size; i++) {
@@ -45,9 +45,9 @@ void softmax_f32(float* x, int size) {
 }
 
 void rmsnorm(Tensor* ot, Tensor* xt, Tensor* weightt, int size) {
-    float *o = ot->data;
-    float *x = xt->data;
-    float *weight = weightt->data;
+    float *o = data_f32(ot);
+    float *x = data_f32(xt);
+    float *weight = data_f32(weightt);
 
     // calculate sum of squares
     float ss = 0.0f;
@@ -65,9 +65,9 @@ void rmsnorm(Tensor* ot, Tensor* xt, Tensor* weightt, int size) {
 
 void matmul(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
     // F32 F32 F32 implementation.
-    float *xout = xoutt->data;
-    float *x = xt->data;
-    float *w = wt->data;
+    float *xout = data_f32(xoutt);
+    float *x = data_f32(xt);
+    float *w = data_f32(wt);
 
     // W (d,n) @ x (n,) -> xout (d,)
     // by far the most amount of time is spent inside this little function

@@ -76,8 +76,10 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
         int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
 
         // Slice these from the kv cache.
-        Tensor k = { .data = data_f32(s->key_cache) + loff + pos * kv_dim, .type = F32 };
-        Tensor v = { .data = data_f32(s->value_cache) + loff + pos * kv_dim, .type = F32 };
+        Tensor k;
+        slice(&k, s->key_cache, loff + pos * kv_dim);
+        Tensor v;
+        slice(&v, s->value_cache, loff + pos * kv_dim);
 
         // qkv matmuls for this position
         matmul(s->q, s->xb, layer->wq, dim, attention_dim);

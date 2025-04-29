@@ -81,7 +81,7 @@ Tensor *load_tensor(JSON_Object *o, void * data, const char *name, size_t expect
     //     return float_data;
     // }
 
-    tensor->data =((uint8_t*)data + start);
+    tensor->data = (TensorData*)((uint8_t*)data + start);
 
     return tensor;
 }
