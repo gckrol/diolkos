@@ -10,47 +10,23 @@
 #include "utils.h"
 #include "safetensors.h"
 
-// Utility function for safe allocation with error handling
-void* safe_calloc(size_t count, size_t size, const char* description) {
-    void* ptr = calloc(count, size);
-    if (ptr == NULL) {
-        fprintf(stderr, "Failed to allocate memory for %s (%zu bytes)\n", 
-                description, count * size);
-        exit(EXIT_FAILURE);
-    }
-    return ptr;
-}
-
 void malloc_run_state(RunState* s, Config* p) {
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
-    s->x = safe_calloc(p->dim, sizeof(float), "RunState x");
-    s->xb = safe_calloc(p->dim, sizeof(float), "RunState xb");
-    s->xb2 = safe_calloc(p->dim, sizeof(float), "RunState xb2");
-    s->hb = safe_calloc(p->hidden_dim, sizeof(float), "RunState hb");
-    s->hb2 = safe_calloc(p->hidden_dim, sizeof(float), "RunState hb2");
-    s->q = safe_calloc(p->dim, sizeof(float), "RunState q");
-    s->key_cache = safe_calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float), "RunState key_cache");
-    s->value_cache = safe_calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float), "RunState value_cache");
-    s->att = safe_calloc(p->n_heads * p->seq_len, sizeof(float), "RunState att");
-    s->logits = safe_calloc(p->vocab_size, sizeof(float), "RunState logits");
-}
-
-void free_run_state(RunState* s) {
-    free(s->x);
-    free(s->xb);
-    free(s->xb2);
-    free(s->hb);
-    free(s->hb2);
-    free(s->q);
-    free(s->att);
-    free(s->logits);
-    free(s->key_cache);
-    free(s->value_cache);
+    s->x = Tensor_create(p->dim, F32);
+    s->xb = Tensor_create(p->dim, F32);
+    s->xb2 = Tensor_create(p->dim, F32);
+    s->hb = Tensor_create(p->hidden_dim, F32);
+    s->hb2 = Tensor_create(p->hidden_dim, F32);
+    s->q = Tensor_create(p->dim, F32);
+    s->key_cache = Tensor_create(p->n_layers * p->seq_len * kv_dim, F32);
+    s->value_cache = Tensor_create(p->n_layers * p->seq_len * kv_dim, F32);
+    s->att = Tensor_create(p->n_heads * p->seq_len, F32);
+    s->logits = Tensor_create(p->vocab_size, F32);
 }
 
 void build_transformer_from_safetensors(Transformer *t, const char* model_path) {
     // Load the safetensors model
-    Safetensors *st = load_safetensors(model_path);
+    Model *st = load_safetensors(model_path);
     if (!st) {
         fprintf(stderr, "Failed to load safetensors model from %s\n", model_path);
         exit(EXIT_FAILURE);
@@ -58,11 +34,6 @@ void build_transformer_from_safetensors(Transformer *t, const char* model_path) 
     
     // Copy the config from safetensors
     memcpy(&t->config, st->config, sizeof(Config));
-    
-    // Set up the transformer weights mapping to safetensors data
-    t->weights.token_embedding_table = st->token_embedding_table;
-    t->weights.rms_final_weight = st->rms_final_weight;
-    t->weights.wcls = st->wcls;
     
     // Point to the safetensors structure for later use
     t->safetensors = st;
@@ -76,12 +47,12 @@ void build_transformer_from_safetensors(Transformer *t, const char* model_path) 
             t->config.n_kv_heads, t->config.vocab_size, t->config.seq_len);
 }
 
-float* forward(Transformer* transformer, int token, int pos) {
+Tensor* forward(Transformer* transformer, int token, int pos) {
     // a few convenience variables
     Config* p = &transformer->config;
-    Safetensors* st = transformer->safetensors;
+    Model* st = transformer->safetensors;
     RunState* s = &transformer->state;
-    float *x = s->x;
+    Tensor *x = s->x;
     int dim = p->dim;
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
     int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
@@ -90,11 +61,11 @@ float* forward(Transformer* transformer, int token, int pos) {
     int attention_dim = p->n_heads * head_size;
 
     // copy the token embedding into x
-    float* content_row = st->token_embedding_table + token * dim;
-    memcpy(x, content_row, dim*sizeof(*x));
+    float* content_row = (float*)(st->token_embedding_table->data) + token * dim;
+    memcpy(x->data, content_row, dim*sizeof(float));
 
     // forward all the layers
-    for(unsigned long long l = 0; l < p->n_layers; l++) {
+    for(int l = 0; l < p->n_layers; l++) {
         // access the layer weights
         Layer *layer = &st->layers[l];
 
@@ -103,13 +74,15 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // key and value point to the kv cache
         int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
-        s->k = s->key_cache + loff + pos * kv_dim;
-        s->v = s->value_cache + loff + pos * kv_dim;
+
+        // Slice these from the kv cache.
+        Tensor k = { .data = (float*)s->key_cache->data + loff + pos * kv_dim, .type = F32 };
+        Tensor v = { .data = (float*)s->value_cache->data + loff + pos * kv_dim, .type = F32 };
 
         // qkv matmuls for this position
         matmul(s->q, s->xb, layer->wq, dim, attention_dim);
-        matmul(s->k, s->xb, layer->wk, dim, kv_dim);
-        matmul(s->v, s->xb, layer->wv, dim, kv_dim);
+        matmul(&k, s->xb, layer->wk, dim, kv_dim);
+        matmul(&v, s->xb, layer->wv, dim, kv_dim);
 
         if (st->huggingface_rope) {
             // RoPE relative positional encoding: using complex number rotation like in lm.rs
@@ -126,10 +99,10 @@ float* forward(Transformer* transformer, int token, int pos) {
                     int q_idx2 = (i * head_size) + j + (head_size/2);
                     
                     // For query vector - apply complex number rotation
-                    float q0 = s->q[q_idx1];
-                    float q1 = s->q[q_idx2];
-                    s->q[q_idx1] = q0 * fcr - q1 * fci;
-                    s->q[q_idx2] = q0 * fci + q1 * fcr;
+                    float q0 = get_float(s->q, q_idx1);
+                    float q1 = get_float(s->q, q_idx2);
+                    set_float(s->q, q_idx1, q0 * fcr - q1 * fci);
+                    set_float(s->q, q_idx2, q0 * fci + q1 * fcr);
                     
                     // For key vector - check if this head's key part is within kv_dim
                     // This is equivalent to the "rotn" logic in the Rust code
@@ -137,10 +110,10 @@ float* forward(Transformer* transformer, int token, int pos) {
                         int k_idx1 = (i * head_size) + j;
                         int k_idx2 = (i * head_size) + j + (head_size/2);
                         
-                        float k0 = s->k[k_idx1];
-                        float k1 = s->k[k_idx2];
-                        s->k[k_idx1] = k0 * fcr - k1 * fci;
-                        s->k[k_idx2] = k0 * fci + k1 * fcr;
+                        float k0 = get_float(&k, k_idx1);
+                        float k1 = get_float(&k, k_idx2);
+                        set_float(&k, k_idx1, k0 * fcr - k1 * fci);
+                        set_float(&k, k_idx2, k0 * fci + k1 * fcr);
                     }
                 }
             }
@@ -154,11 +127,11 @@ float* forward(Transformer* transformer, int token, int pos) {
                 float fci = sinf(val);
                 int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
                 for (int v = 0; v < rotn; v++) {
-                    float* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
-                    float v0 = vec[i];
-                    float v1 = vec[i+1];
-                    vec[i]   = v0 * fcr - v1 * fci;
-                    vec[i+1] = v0 * fci + v1 * fcr;
+                    Tensor* vec = v == 0 ? s->q : &k; // the vector to rotate (query or key)
+                    float v0 = get_float(vec, i);
+                    float v1 = get_float(vec, i+1);
+                    set_float(vec, i, v0 * fcr - v1 * fci);
+                    set_float(vec, i+1, v0 * fci + v1 * fcr);
                 }
             }            
         }
@@ -169,13 +142,13 @@ float* forward(Transformer* transformer, int token, int pos) {
         #pragma omp parallel for private(h)
         for (h = 0; h < p->n_heads; h++) {
             // get the query vector for this head
-            float* q = s->q + h * head_size;
+            float* q = (float*)s->q->data + h * head_size;
             // attention scores for this head
-            float* att = s->att + h * p->seq_len;
+            float* att = (float*)s->att->data + h * p->seq_len;
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos; t++) {
                 // get the key vector for this head and at this timestep
-                float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                float* k = (float*)s->key_cache->data + loff + t * kv_dim + (h / kv_mul) * head_size;
                 // calculate the attention score as the dot product of q and k
                 float score = 0.0f;
                 for (int i = 0; i < head_size; i++) {
@@ -187,14 +160,14 @@ float* forward(Transformer* transformer, int token, int pos) {
             }
 
             // softmax the scores to get attention weights, from 0..pos inclusively
-            softmax(att, pos + 1);
+            softmax_f32(att, pos + 1);
 
             // weighted sum of the values, store back into xb
-            float* xb = s->xb + h * head_size;
+            float* xb = (float*)s->xb->data + h * head_size;
             memset(xb, 0, head_size * sizeof(float));
             for (int t = 0; t <= pos; t++) {
                 // get the value vector for this head and at this timestep
-                float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
+                float* v = (float*)s->value_cache->data + loff + t * kv_dim + (h / kv_mul) * head_size;
                 // get the attention weight for this timestep
                 float a = att[t];
                 // accumulate the weighted value into xb
@@ -209,7 +182,7 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // residual connection back into x
         for (int i = 0; i < dim; i++) {
-            x[i] += s->xb2[i];
+            ((float*)x->data)[i] += get_float(s->xb2, i);
         }
 
         // ffn rmsnorm
@@ -222,12 +195,12 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // SwiGLU non-linearity
         for (int i = 0; i < hidden_dim; i++) {
-            float val = s->hb[i];
+            float val = get_float(s->hb, i);
             // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
             val *= (1.0f / (1.0f + expf(-val)));
             // elementwise multiply with w3(x)
-            val *= s->hb2[i];
-            s->hb[i] = val;
+            val *= get_float(s->hb2, i);
+            set_float(s->hb, i, val);
         }
 
         // final matmul to get the output of the ffn
@@ -235,7 +208,7 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // residual connection
         for (int i = 0; i < dim; i++) {
-            x[i] += s->xb[i];
+            ((float*)x->data)[i] += get_float(s->xb, i);
         }
     }
 

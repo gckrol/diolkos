@@ -38,8 +38,8 @@ long time_in_ms() {
 // ----------------------------------------------------------------------------
 // generation loop
 
-void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int steps) {
-    char *empty_prompt = "";
+void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, const char *prompt, int steps) {
+    const char *empty_prompt = "";
     if (prompt == NULL) { prompt = empty_prompt; }
 
     // encode the (string) prompt into tokens sequence
@@ -59,7 +59,7 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
-        float* logits = forward(transformer, token, pos);
+        Tensor* logits = forward(transformer, token, pos);
 
         // advance the state machine
         if (pos < num_prompt_tokens - 1) {
@@ -67,7 +67,7 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
             next = prompt_tokens[pos + 1];
         } else {
             // otherwise sample the next token from the logits
-            next = sample(sampler, logits);
+            next = sample(sampler, logits->data);
         }
         pos++;
 
@@ -127,7 +127,6 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
     int8_t user_turn = 1; // user starts
     int next;        // will store the next token in the sequence
     int token;       // stores the current token to feed into the transformer
-    int prev_token;
     int pos = 0;     // position in the sequence
     while (pos < steps) {
 
@@ -191,8 +190,8 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
         if (token == 2) { user_turn = 1; }
 
         // forward the transformer to get logits for the next token
-        float* logits = forward(transformer, token, pos);
-        next = sample(sampler, logits);
+        Tensor* logits = forward(transformer, token, pos);
+        next = sample(sampler, logits->data);
         pos++;
 
         if (user_idx >= num_prompt_tokens && next != 2) {
@@ -231,13 +230,13 @@ int main(int argc, char *argv[]) {
 
     // default parameters
     char *checkpoint_path = NULL;  // e.g. out/model.bin
-    char *tokenizer_path = "python/tokenizer.bin";
+    const char *tokenizer_path = "python/tokenizer.bin";
     float temperature = 1.0f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
     float topp = 0.9f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
     int steps = 256;            // number of steps to run for
     char *prompt = NULL;        // prompt string
     unsigned long long rng_seed = 0; // seed rng with time by default
-    char *mode = "generate";    // generate|chat
+    const char *mode = "generate";    // generate|chat
     char *system_prompt = NULL; // the (optional) system prompt to use in chat mode
     
     // Start timing for initialization

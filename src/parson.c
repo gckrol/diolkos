@@ -1394,7 +1394,8 @@ JSON_Value * json_parse_string_with_comments(const char *string) {
     remove_comments(string_mutable_copy, "/*", "*/");
     remove_comments(string_mutable_copy, "//", "\n");
     string_mutable_copy_ptr = string_mutable_copy;
-    result = parse_value((const char**)&string_mutable_copy_ptr, 0);
+    const char *const_ptr = string_mutable_copy_ptr;
+    result = parse_value(&const_ptr, 0);
     parson_free(string_mutable_copy);
     return result;
 }

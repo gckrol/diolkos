@@ -5,10 +5,10 @@
 #include <ctype.h>
 
 int compare_tokens(const void *a, const void *b) {
-    return strcmp(((TokenIndex*)a)->str, ((TokenIndex*)b)->str);
+    return strcmp(((const TokenIndex*)a)->str, ((const TokenIndex*)b)->str);
 }
 
-void build_tokenizer(Tokenizer* t, char* tokenizer_path) {
+void build_tokenizer(Tokenizer* t, const char* tokenizer_path) {
     // read in the file
     FILE *file = fopen(tokenizer_path, "rb");
     if (!file) { fprintf(stderr, "couldn't load %s\n", tokenizer_path); exit(EXIT_FAILURE); }
@@ -67,7 +67,7 @@ char* decode(Tokenizer* t, int prev_token, int token) {
     return piece;
 }
 
-void safe_printf(char *piece) {
+void safe_printf(const char *piece) {
     // piece might be a raw byte token, and we only want to print printable chars or whitespace
     // because some of the other bytes can be various control codes, backspace, etc.
     if (piece == NULL) { return; }
@@ -81,14 +81,14 @@ void safe_printf(char *piece) {
     printf("%s", piece);
 }
 
-int str_lookup(char *str, TokenIndex *sorted_vocab, int vocab_size) {
+int str_lookup(const char *str, TokenIndex *sorted_vocab, int vocab_size) {
     // efficiently find the perfect match for str in vocab, return its index or -1 if not found
     TokenIndex tok = { .str = str }; // acts as the key to search for
     TokenIndex *res = bsearch(&tok, sorted_vocab, vocab_size, sizeof(TokenIndex), compare_tokens);
     return res != NULL ? res->id : -1;
 }
 
-void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *n_tokens) {
+void encode(Tokenizer* t, const char *text, int8_t bos, int8_t eos, int *tokens, int *n_tokens) {
     // encode the string text (input) into an upper-bound preallocated tokens[] array
     // bos != 0 means prepend the BOS token (=1), eos != 0 means append the EOS token (=2)
     if (text == NULL) { fprintf(stderr, "cannot encode NULL text\n"); exit(EXIT_FAILURE); }
@@ -132,7 +132,7 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
     // U+10000	U+10FFFF    11110xxx	10xxxxxx	10xxxxxx	10xxxxxx
 
     // process the raw (UTF-8) byte sequence of the input string
-    for (char *c = text; *c != '\0'; c++) {
+    for (const char *c = text; *c != '\0'; c++) {
 
         // reset buffer if the current byte is ASCII or a leading byte
         // 0xC0 is 11000000, so (*c & 0xC0) keeps the first 2 bits and zeros the rest
@@ -165,7 +165,7 @@ void encode(Tokenizer* t, char *text, int8_t bos, int8_t eos, int *tokens, int *
             // byte_fallback encoding: just encode each byte as a token
             // +3 is here because the first 3 vocab elements are <unk>, <s>, </s>
             // so the individual bytes only start at index 3
-            for (int i=0; i < str_len; i++) {
+            for (size_t i=0; i < str_len; i++) {
                 tokens[(*n_tokens)++] = (unsigned char)str_buffer[i] + 3;
             }
         }

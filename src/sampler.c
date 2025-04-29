@@ -30,8 +30,8 @@ int sample_mult(float* probabilities, int n, float coin) {
 }
 
 int compare(const void* a, const void* b) {
-    ProbIndex* a_ = (ProbIndex*) a;
-    ProbIndex* b_ = (ProbIndex*) b;
+    const ProbIndex* a_ = (const ProbIndex*) a;
+    const ProbIndex* b_ = (const ProbIndex*) b;
     if (a_->prob > b_->prob) return -1;
     if (a_->prob < b_->prob) return 1;
     return 0;
@@ -115,7 +115,7 @@ int sample(Sampler* sampler, float* logits) {
         // apply the temperature to the logits
         for (int q=0; q<sampler->vocab_size; q++) { logits[q] /= sampler->temperature; }
         // apply softmax to the logits to get the probabilities for next token
-        softmax(logits, sampler->vocab_size);
+        softmax_f32(logits, sampler->vocab_size);
         // flip a (float) coin (this is our source of entropy for sampling)
         float coin = random_f32(&sampler->rng_state);
         // we sample from this distribution to get the next token

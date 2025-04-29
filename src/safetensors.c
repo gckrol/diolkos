@@ -1,4 +1,3 @@
-#include "safetensors.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,57 +8,30 @@
 #include <dirent.h>
 #include <math.h>
 
+#include "safetensors.h"
 #include "parson.h"
 #include "transformer.h"
+#include "tensor.h"
 
-float bf16_to_float(uint16_t bf16) {
-    // BF16 has the same exponent bits as FP32 but only the top 7 mantissa bits
-    // To convert: put the 16 bits in the top half of a 32-bit word, clear bottom 16 bits
-    uint32_t bits = ((uint32_t)bf16) << 16;
-    float result;
-    memcpy(&result, &bits, sizeof(result));  // bit-level reinterpretation
-    return result;
-}
+Tensor *load_tensor(JSON_Object *o, void * data, const char *name, size_t expected_size) {
+    Tensor *tensor = calloc(1, sizeof(Tensor));
 
-float f16_to_float(uint16_t f16) {
-    // Extract components
-    uint32_t sign = (f16 >> 15) & 0x1;
-    uint32_t exponent = (f16 >> 10) & 0x1F;
-    uint32_t mantissa = f16 & 0x3FF;
-    
-    // Special case: zero
-    if (exponent == 0 && mantissa == 0) {
-        return sign ? -0.0f : 0.0f;
-    }
-    
-    // Special case: denormalized numbers
-    if (exponent == 0) {
-        float result = mantissa * powf(2.0f, -24.0f);
-        return sign ? -result : result;
-    }
-    
-    // Normalized number
-    // Convert to F32 format: adjust exponent bias (15 -> 127) and shift mantissa
-    uint32_t f32_bits = (sign << 31) | ((exponent + 112) << 23) | (mantissa << 13);
-    float result;
-    memcpy(&result, &f32_bits, sizeof(result));
-    
-    return result;
-}
-
-float *load_tensor(JSON_Object *o, void * data, const char *name, size_t expected_size) {
     JSON_Object *tensor_obj = json_object_get_object(o, name);
     if (tensor_obj == NULL) {
         fprintf(stderr, "Failed to get tensor object for %s\n", name);
         exit(EXIT_FAILURE);
     }
     const char *dtype = json_object_get_string(tensor_obj, "dtype");
-    int item_size = 4;
-    if (strcmp(dtype, "BF16") == 0) {
+    int item_size = -1;
+    if (strcmp(dtype, "F32") == 0) {
+        item_size = 4;
+        tensor->type = F32;
+    } else if (strcmp(dtype, "BF16") == 0) {
         item_size = 2;
-    }
-    if (strcmp(dtype, "F16") == 0) {
+        tensor->type = BF16;
+    } else if (strcmp(dtype, "F16") == 0) {
         item_size = 2;
+        tensor->type = F16;
     }
     JSON_Array *shape = json_object_get_array(tensor_obj, "shape");
     size_t n_dims = json_array_get_count(shape);
@@ -80,40 +52,42 @@ float *load_tensor(JSON_Object *o, void * data, const char *name, size_t expecte
         exit(EXIT_FAILURE);
     }
 
-    if (strcmp(dtype, "BF16") == 0) {
-        // We now need to convert the half-precision floats to single-precision.
-        // This is a bit tricky, as we need to read the data as uint16_t and then convert it.
-        uint16_t *half_data = (uint16_t*)((uint8_t*)data + start);
-        float *float_data = (float*)malloc(size * sizeof(float));
-        if (float_data == NULL) {
-            fprintf(stderr, "Failed to allocate memory for float data\n");
-            exit(EXIT_FAILURE);
-        }
-        for (size_t i = 0; i < size; i++) {
-            uint16_t half = half_data[i];
-            float_data[i] = bf16_to_float(half);
-        }
-        return float_data;
-    }
-    if (strcmp(dtype, "F16") == 0) {
-        uint16_t *half_data = (uint16_t*)((uint8_t*)data + start);
-        float *float_data = (float*)malloc(size * sizeof(float));
-        if (float_data == NULL) {
-            fprintf(stderr, "Failed to allocate memory for float data\n");
-            exit(EXIT_FAILURE);
-        }
-        for (size_t i = 0; i < size; i++) {
-            uint16_t half = half_data[i];
-            float_data[i] = f16_to_float(half);
-        }
-        return float_data;
-    }
+    // if (strcmp(dtype, "BF16") == 0) {
+    //     // We now need to convert the half-precision floats to single-precision.
+    //     // This is a bit tricky, as we need to read the data as uint16_t and then convert it.
+    //     uint16_t *half_data = (uint16_t*)((uint8_t*)data + start);
+    //     float *float_data = (float*)malloc(size * sizeof(float));
+    //     if (float_data == NULL) {
+    //         fprintf(stderr, "Failed to allocate memory for float data\n");
+    //         exit(EXIT_FAILURE);
+    //     }
+    //     for (size_t i = 0; i < size; i++) {
+    //         uint16_t half = half_data[i];
+    //         float_data[i] = bf16_to_float(half);
+    //     }
+    //     return float_data;
+    // }
+    // if (strcmp(dtype, "F16") == 0) {
+    //     uint16_t *half_data = (uint16_t*)((uint8_t*)data + start);
+    //     float *float_data = (float*)malloc(size * sizeof(float));
+    //     if (float_data == NULL) {
+    //         fprintf(stderr, "Failed to allocate memory for float data\n");
+    //         exit(EXIT_FAILURE);
+    //     }
+    //     for (size_t i = 0; i < size; i++) {
+    //         uint16_t half = half_data[i];
+    //         float_data[i] = f16_to_float(half);
+    //     }
+    //     return float_data;
+    // }
 
-    return (float*)((uint8_t*)data + start);
+    tensor->data =((uint8_t*)data + start);
+
+    return tensor;
 }
 
 // Process a single safetensors file and load its tensors
-int process_safetensors_file(const char* filepath, Safetensors *st, Config *config) {
+int process_safetensors_file(const char* filepath, Model *st, Config *config) {
     int tensors_found = 0;
     Layer *layers = st->layers;
     int head_size = config->dim / config->n_heads;
@@ -267,7 +241,7 @@ int process_safetensors_file(const char* filepath, Safetensors *st, Config *conf
     return tensors_found;
 }
 
-Safetensors *load_safetensors(const char* dir) {
+Model *load_safetensors(const char* dir) {
     ///////////////////////////////
     // Load the config.json file
     char config_path[1024];
@@ -286,25 +260,17 @@ Safetensors *load_safetensors(const char* dir) {
     json_value_free(config_value);
 
     ///////////////
-    // Allocate the Safetensors struct
-    Safetensors *st = calloc(1, sizeof(Safetensors));
+    // Allocate the Model struct
+    Model *st = calloc(1, sizeof(Model));
     if (st == NULL) {
-        fprintf(stderr, "Failed to allocate memory for Safetensors struct\n");
+        fprintf(stderr, "Failed to allocate memory for Model struct\n");
         return NULL;
     }
     st->config = config;
     st->huggingface_rope = true;
 
     // Initialize layers
-    Layer *layers = malloc(config->n_layers * sizeof(Layer));
-    if (layers == NULL) {
-        fprintf(stderr, "Failed to allocate memory for Layers\n");
-        free(st);
-        return NULL;
-    }
-    
-    // Initialize all layer pointers to NULL
-    memset(layers, 0, config->n_layers * sizeof(Layer));
+    Layer *layers = calloc(config->n_layers, sizeof(Layer));
     st->layers = layers;
     
     // Initialize st's top-level tensor pointers to NULL

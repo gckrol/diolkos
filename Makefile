@@ -1,25 +1,26 @@
 # choose your compiler, e.g. gcc/clang
 # example override to clang: make run CC=clang
-CC = clang
+CC = clang -Wall -Wextra -Wpedantic -Wstrict-prototypes -Wpointer-arith -Wcast-qual -Wwrite-strings -Werror
 
 # Source files and object files
-SRC = src/tokenizer.c src/sampler.c src/transformer.c src/utils.c src/safetensors.c src/parson.c
+SRC = src/tokenizer.c src/sampler.c src/transformer.c src/utils.c src/safetensors.c src/parson.c src/tensor.c
 OBJ = $(patsubst src/%.c,obj/%.o,$(SRC))
+OPT = -Ofast
 
 .PHONY: all
 all: bin/plainllm bin/stest
 
 bin/plainllm: obj/main.o $(OBJ)
 	@mkdir -p bin
-	$(CC) -Ofast -march=native -g -o $@ $^ -lm
+	$(CC) $(OPT) -march=native -g -o $@ $^ -lm
 
 bin/stest: obj/stest.o $(OBJ)
 	@mkdir -p bin
-	$(CC) -Ofast -march=native -g -o $@ $^ -lm
+	$(CC) $(OPT) -march=native -g -o $@ $^ -lm
 
 obj/%.o: src/%.c
 	@mkdir -p obj
-	$(CC) -Ofast -march=native -g -c -o $@ $<
+	$(CC) $(OPT) -march=native -g -c -o $@ $<
 
 # Useful for testing - build + run with the small stories model.
 .PHONY: run

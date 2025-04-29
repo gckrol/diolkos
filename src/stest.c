@@ -8,7 +8,7 @@ int main(int argc, char *argv[]) {
     }
 
     // Load the safetensors file
-    Safetensors *st = load_safetensors(argv[1]);
+    Model *st = load_safetensors(argv[1]);
     if (st == NULL) {
         fprintf(stderr, "Failed to load safetensors file\n");
         return 1;
