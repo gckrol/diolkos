@@ -151,7 +151,7 @@ void print_transformer_memory(Transformer* transformer) {
     size_t model_memory = 0;
     size_t total_params = 0;
     
-    for (int i = 0; i < LAYER_TYPE_COUNT; i++) {
+    for (int i = 0; i < K_CACHE; i++) {
         model_memory += layer_types[i].memory;
         total_params += layer_types[i].params;
     }
