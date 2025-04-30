@@ -24,7 +24,7 @@
 // ----------------------------------------------------------------------------
 // utilities: time
 
-long time_in_ms() {
+long time_in_ms(void) {
     // return time in milliseconds, for benchmarking the model speed
     struct timespec time;
 // VS Code will complain about CLOCK_REALTIME being undefined otherwise.
@@ -125,7 +125,7 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
 
     // start the main loop
     int8_t user_turn = 1; // user starts
-    int next;        // will store the next token in the sequence
+    int next = 0;        // will store the next token in the sequence
     int token;       // stores the current token to feed into the transformer
     int pos = 0;     // position in the sequence
     while (pos < steps) {
@@ -158,15 +158,15 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
             } else {
                 // char user_template[] = "[INST] %s [/INST]";
                 // For Felladrin/Llama-160M-Chat-v1:
-//                 char user_template[] =
-// "<|im_start|>user\n\
-// %s<|im_end|>\n\
-// <|im_start|>assistant\n";
-                // For TinyLlama
                 char user_template[] =
-"<|user|>\n\
-%s</s>\n\
-<|assistant|>\n";
+"<|im_start|>user\n\
+%s<|im_end|>\n\
+<|im_start|>assistant\n";
+                // For TinyLlama
+//                 char user_template[] =
+// "<|user|>\n
+// %s</s>\n
+// <|assistant|>\n";
                 sprintf(rendered_prompt, user_template, user_prompt);
             }
             // printf("Prompt: %s\n", rendered_prompt);
@@ -211,7 +211,7 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
 // CLI, include only if not testing
 #ifndef TESTING
 
-void error_usage() {
+void error_usage(void) {
     fprintf(stderr, "Usage:   run <checkpoint> [options]\n");
     fprintf(stderr, "Example: run model.bin -n 256 -i \"Once upon a time\"\n");
     fprintf(stderr, "Options:\n");

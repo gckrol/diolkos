@@ -17,16 +17,19 @@ typedef struct TensorData TensorData;
 typedef struct Tensor {
     quantization_type type;
     TensorData *data;
-    float *scale;
+    float *scales;
+    size_t dim;
 } Tensor;
 
 float bf16_to_float(uint16_t bf16);
 float f16_to_float(uint16_t f16);
 
 Tensor *Tensor_create(size_t size, quantization_type type);
+Tensor *quantize_Q8_0(Tensor *input);
 
 void slice(Tensor *dest, Tensor *src, int start);
 
 float *data_f32(Tensor *tensor);
+int8_t *data_i8(Tensor *tensor);
 
 #endif // TENSOR_H

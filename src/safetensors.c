@@ -13,7 +13,7 @@
 #include "transformer.h"
 #include "tensor.h"
 
-Tensor *load_tensor(JSON_Object *o, void * data, const char *name, size_t expected_size) {
+Tensor *load_tensor(JSON_Object *o, void * data, const char *name, size_t expected_size, quantization_type qt) {
     Tensor *tensor = calloc(1, sizeof(Tensor));
 
     JSON_Object *tensor_obj = json_object_get_object(o, name);
@@ -43,6 +43,7 @@ Tensor *load_tensor(JSON_Object *o, void * data, const char *name, size_t expect
         fprintf(stderr, "Tensor size mismatch for %s: expected %zu, got %zu\n", name, expected_size, size);
         exit(EXIT_FAILURE);
     }
+    tensor->dim = size;
     JSON_Array *data_offsets = json_object_get_array(tensor_obj, "data_offsets");
     size_t start = json_array_get_number(data_offsets, 0);
     size_t end = json_array_get_number(data_offsets, 1);
@@ -52,38 +53,18 @@ Tensor *load_tensor(JSON_Object *o, void * data, const char *name, size_t expect
         exit(EXIT_FAILURE);
     }
 
-    // if (strcmp(dtype, "BF16") == 0) {
-    //     // We now need to convert the half-precision floats to single-precision.
-    //     // This is a bit tricky, as we need to read the data as uint16_t and then convert it.
-    //     uint16_t *half_data = (uint16_t*)((uint8_t*)data + start);
-    //     float *float_data = (float*)malloc(size * sizeof(float));
-    //     if (float_data == NULL) {
-    //         fprintf(stderr, "Failed to allocate memory for float data\n");
-    //         exit(EXIT_FAILURE);
-    //     }
-    //     for (size_t i = 0; i < size; i++) {
-    //         uint16_t half = half_data[i];
-    //         float_data[i] = bf16_to_float(half);
-    //     }
-    //     return float_data;
-    // }
-    // if (strcmp(dtype, "F16") == 0) {
-    //     uint16_t *half_data = (uint16_t*)((uint8_t*)data + start);
-    //     float *float_data = (float*)malloc(size * sizeof(float));
-    //     if (float_data == NULL) {
-    //         fprintf(stderr, "Failed to allocate memory for float data\n");
-    //         exit(EXIT_FAILURE);
-    //     }
-    //     for (size_t i = 0; i < size; i++) {
-    //         uint16_t half = half_data[i];
-    //         float_data[i] = f16_to_float(half);
-    //     }
-    //     return float_data;
-    // }
-
     tensor->data = (TensorData*)((uint8_t*)data + start);
 
-    return tensor;
+    if (qt == tensor->type) {
+        // Matches the requested type.
+        return tensor;
+    } else if (qt == Q8_0) {
+        // Quantize.
+        return quantize_Q8_0(tensor);
+    }
+    // TODO: upcast to F32 if needed.
+    fprintf(stderr, "Unsupported quantization type for tensor %s: %d\n", name, qt);
+    exit(EXIT_FAILURE);
 }
 
 // Process a single safetensors file and load its tensors
@@ -138,21 +119,21 @@ int process_safetensors_file(const char* filepath, Model *st, Config *config) {
         
         // Check for token embedding
         if (strcmp(tensor_name, "model.embed_tokens.weight") == 0 && st->token_embedding_table == NULL) {
-            st->token_embedding_table = load_tensor(header, tensors, tensor_name, config->vocab_size * config->dim);
+            st->token_embedding_table = load_tensor(header, tensors, tensor_name, config->vocab_size * config->dim, F32);
             tensors_found++;
             continue;
         }
         
         // Check for final norm
         if (strcmp(tensor_name, "model.norm.weight") == 0 && st->rms_final_weight == NULL) {
-            st->rms_final_weight = load_tensor(header, tensors, tensor_name, config->dim);
+            st->rms_final_weight = load_tensor(header, tensors, tensor_name, config->dim, F32);
             tensors_found++;
             continue;
         }
         
         // Check for classifier
         if (strcmp(tensor_name, "lm_head.weight") == 0 && st->wcls == NULL) {
-            st->wcls = load_tensor(header, tensors, tensor_name, config->vocab_size * config->dim);
+            st->wcls = load_tensor(header, tensors, tensor_name, config->vocab_size * config->dim, F32);
             tensors_found++;
             continue;
         }
@@ -169,63 +150,63 @@ int process_safetensors_file(const char* filepath, Model *st, Config *config) {
                     
                     // Input layernorm
                     if (strcmp(component, "input_layernorm.weight") == 0 && layers[layer_idx].rms_att_weight == NULL) {
-                        layers[layer_idx].rms_att_weight = load_tensor(header, tensors, tensor_name, config->dim);
+                        layers[layer_idx].rms_att_weight = load_tensor(header, tensors, tensor_name, config->dim, F32);
                         tensors_found++;
                         continue;
                     }
                     
                     // Q projection
                     if (strcmp(component, "self_attn.q_proj.weight") == 0 && layers[layer_idx].wq == NULL) {
-                        layers[layer_idx].wq = load_tensor(header, tensors, tensor_name, config->dim * config->dim);
+                        layers[layer_idx].wq = load_tensor(header, tensors, tensor_name, config->dim * config->dim, Q8_0);
                         tensors_found++;
                         continue;
                     }
                     
                     // K projection
                     if (strcmp(component, "self_attn.k_proj.weight") == 0 && layers[layer_idx].wk == NULL) {
-                        layers[layer_idx].wk = load_tensor(header, tensors, tensor_name, config->dim * config->n_kv_heads * head_size);
+                        layers[layer_idx].wk = load_tensor(header, tensors, tensor_name, config->dim * config->n_kv_heads * head_size, Q8_0);
                         tensors_found++;
                         continue;
                     }
                     
                     // V projection
                     if (strcmp(component, "self_attn.v_proj.weight") == 0 && layers[layer_idx].wv == NULL) {
-                        layers[layer_idx].wv = load_tensor(header, tensors, tensor_name, config->dim * config->n_kv_heads * head_size);
+                        layers[layer_idx].wv = load_tensor(header, tensors, tensor_name, config->dim * config->n_kv_heads * head_size, Q8_0);
                         tensors_found++;
                         continue;
                     }
                     
                     // O projection
                     if (strcmp(component, "self_attn.o_proj.weight") == 0 && layers[layer_idx].wo == NULL) {
-                        layers[layer_idx].wo = load_tensor(header, tensors, tensor_name, config->dim * config->dim);
+                        layers[layer_idx].wo = load_tensor(header, tensors, tensor_name, config->dim * config->dim, Q8_0);
                         tensors_found++;
                         continue;
                     }
                     
                     // Post attention layernorm
                     if (strcmp(component, "post_attention_layernorm.weight") == 0 && layers[layer_idx].rms_ffn_weight == NULL) {
-                        layers[layer_idx].rms_ffn_weight = load_tensor(header, tensors, tensor_name, config->dim);
+                        layers[layer_idx].rms_ffn_weight = load_tensor(header, tensors, tensor_name, config->dim, F32);
                         tensors_found++;
                         continue;
                     }
                     
                     // MLP gate projection
                     if (strcmp(component, "mlp.gate_proj.weight") == 0 && layers[layer_idx].w1 == NULL) {
-                        layers[layer_idx].w1 = load_tensor(header, tensors, tensor_name, config->dim * config->hidden_dim);
+                        layers[layer_idx].w1 = load_tensor(header, tensors, tensor_name, config->dim * config->hidden_dim, Q8_0);
                         tensors_found++;
                         continue;
                     }
                     
                     // MLP down projection
                     if (strcmp(component, "mlp.down_proj.weight") == 0 && layers[layer_idx].w2 == NULL) {
-                        layers[layer_idx].w2 = load_tensor(header, tensors, tensor_name, config->dim * config->hidden_dim);
+                        layers[layer_idx].w2 = load_tensor(header, tensors, tensor_name, config->dim * config->hidden_dim, Q8_0);
                         tensors_found++;
                         continue;
                     }
                     
                     // MLP up projection
                     if (strcmp(component, "mlp.up_proj.weight") == 0 && layers[layer_idx].w3 == NULL) {
-                        layers[layer_idx].w3 = load_tensor(header, tensors, tensor_name, config->dim * config->hidden_dim);
+                        layers[layer_idx].w3 = load_tensor(header, tensors, tensor_name, config->dim * config->hidden_dim, Q8_0);
                         tensors_found++;
                         continue;
                     }

@@ -1,6 +1,6 @@
 # choose your compiler, e.g. gcc/clang
 # example override to clang: make run CC=clang
-CC = clang -Wall -Wextra -Wpedantic -Wstrict-prototypes -Wpointer-arith -Wcast-qual -Wwrite-strings -Werror
+CC = gcc -Wall -Wextra -Wpedantic -Wstrict-prototypes -Wpointer-arith -Wcast-qual -Wwrite-strings
 
 # Source files and object files
 SRC = src/tokenizer.c src/sampler.c src/transformer.c src/utils.c src/safetensors.c src/parson.c src/tensor.c
