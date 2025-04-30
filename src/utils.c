@@ -83,12 +83,21 @@ void matmul_f32(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
     }
 }
 
+int max(int a, int b) {
+    return (a > b) ? a : b;
+}   
+
+Tensor *temp_q8 = NULL;
+void init_utils(int dim, int hidden_dim) {
+    temp_q8 = Tensor_create(max(dim, hidden_dim), Q8_0);
+}
+
 void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
-    Tensor *xt_q8 = convert(xt, Q8_0); // TODO: remove memory allocation.
+    convert_into(temp_q8, xt);
 
     float *restrict xout = data_f32(xoutt);
-    int8_t *restrict x = data_i8(xt_q8);
-    float *restrict xs = xt_q8->scale;
+    int8_t *restrict x = data_i8(temp_q8);
+    float *restrict xs = temp_q8->scale;
     int8_t *restrict w = data_i8(wt);
     float *restrict ws = wt->scale;
 
@@ -124,10 +133,6 @@ void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
             sum += fvals[j] * scales[j];
         }        
         xout[i] = sum;
-    }
-
-    if (xt_q8 != xt) {
-        Tensor_destroy(xt_q8);
     }
 }
 

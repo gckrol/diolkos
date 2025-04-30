@@ -28,7 +28,10 @@ Tensor *Tensor_create(size_t size, quantization_type type);
 void Tensor_destroy(Tensor *tensor);
 
 Tensor *convert(Tensor *input, quantization_type type);
-Tensor *convert_f32_q8_0(Tensor *input);
+void convert_into(Tensor *dst, Tensor *input);
+void convert_slice_into(Tensor *dst, Tensor *input, size_t start, size_t length);
+
+Tensor *convert_f32_q8(Tensor *input);
 Tensor *convert_f16_q8_0(Tensor *input);
 Tensor *convert_f16_f32(Tensor *input);
 

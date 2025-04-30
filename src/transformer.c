@@ -61,8 +61,7 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
     int attention_dim = p->n_heads * head_size;
 
     // copy the token embedding into x
-    float* content_row = data_f32(st->token_embedding_table) + token * dim;
-    memcpy(x->data, content_row, dim*sizeof(float));
+    convert_slice_into(x, st->token_embedding_table, token * dim, dim);
 
     // forward all the layers
     for(int l = 0; l < p->n_layers; l++) {

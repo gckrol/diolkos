@@ -115,32 +115,73 @@ int8_t *data_i8(Tensor *tensor) {
 //     return (_Float16*)tensor->data;
 // }
 
-Tensor *convert_f32_q8_0(Tensor *input) {
+void convert_f32_q8_slice_into(Tensor *dst, Tensor *input, size_t start, size_t length) {
+    assert(dst->type == Q8_0);
     assert(input->type == F32);
-    Tensor *result = Tensor_create(input->dim, Q8_0);
+    assert(input->dim >= start+length);
+    assert(dst->dim >= length);
     const int GS = 32;
     float Q_MAX = 127.0f;
 
-    float *input_data = data_f32(input);
-    int8_t *output_data = data_i8(result);
+    float *input_data = data_f32(input) + start;
+    int8_t *output_data = data_i8(dst);
 
     size_t i;
     #pragma omp parallel for private(i)
-    for (i = 0; i < input->dim; i += GS) {
+    for (i = 0; i < length; i += GS) {
         float max_val = 0.0f;
         #pragma omp simd
         for (size_t j = 0; j < GS; j++) {
             max_val = fmaxf(max_val, fabsf(input_data[i + j]));
         }        
         max_val /= Q_MAX;
-        result->scale[i / GS] = max_val;
+        dst->scale[i / GS] = max_val;
 
         #pragma omp simd
         for (size_t j = 0; j < GS; j++) {
             output_data[i + j] = (int8_t) roundf(input_data[i + j] / max_val);
         }
     }
+}
 
+Tensor *convert_f32_q8(Tensor *input) {
+    assert(input->type == F32);
+    Tensor *result = Tensor_create(input->dim, Q8_0);
+    convert_f32_q8_slice_into(result, input, 0, input->dim);
+    return result;
+}
+
+void convert_q8_f32_slice_into(Tensor *dst, Tensor *input, size_t start, size_t length) {
+    assert(input->type == Q8_0);
+    assert(dst->type == F32);
+    assert(input->dim >= start+length);
+    assert(dst->dim >= length);
+
+    const int GS = 32;
+
+    int8_t *input_data = data_i8(input) + start;
+    float *output_data = data_f32(dst);
+
+    size_t i;
+    #pragma omp parallel for private(i)
+    for (i = 0; i < length; i += GS) {
+        float max_val = input->scale[(start+i) / GS];
+
+        #pragma omp simd
+        for (size_t j = 0; j < GS; j++) {
+            output_data[i + j] = (float)input_data[i + j] * max_val;
+        }
+    }
+}
+
+void convert_q8_f32_into(Tensor *dst, Tensor *input) {
+    assert(dst->dim == input->dim);
+    convert_q8_f32_slice_into(dst, input, 0, input->dim);
+}
+
+Tensor *convert_q8_f32(Tensor *input) {
+    Tensor *result = Tensor_create(input->dim, F32);
+    convert_q8_f32_into(result, input);
     return result;
 }
 
@@ -244,7 +285,7 @@ Tensor *convert(Tensor *input, quantization_type type) {
     if (input->type == type) {
         return input;
     } else if (input->type == F32 && type == Q8_0) {
-        return convert_f32_q8_0(input);
+        return convert_f32_q8(input);
     } else if (input->type == F16 && type == Q8_0) {
         return convert_f16_q8_0(input);
     } else if (input->type == BF16 && type == Q8_0) {
@@ -253,7 +294,32 @@ Tensor *convert(Tensor *input, quantization_type type) {
         return convert_f16_f32(input);
     } else if (input->type == BF16 && type == F32) {
         return convert_bf16_f32(input);
+    } else if (input->type == Q8_0 && type == F32) {
+        return convert_q8_f32(input);
     }
     assert(!"unknown conversion");
     return NULL;
+}
+
+void convert_into(Tensor *dst, Tensor *input) {
+    convert_slice_into(dst, input, 0, input->dim);
+}
+
+void convert_slice_into(Tensor *dst, Tensor *input, size_t start, size_t length) {
+    if (input->type == dst->type) {
+        assert(input->dim >= start + length);
+        assert(dst->dim >= length);
+        memcpy(dst->data, (uint8_t*)input->data + quant_size(dst->type) * start, length * quant_size(dst->type));
+        if (input->scale) {
+            memcpy((float*)dst->scale + start / group_size(dst->type), input->scale, length / group_size(dst->type) * sizeof(float));
+        }
+        return;
+    } else if (input->type == Q8_0 && dst->type == F32) {
+        convert_q8_f32_slice_into(dst, input, start, length);
+        return;
+    } else if (input->type == F32 && dst->type == Q8_0) {
+        convert_f32_q8_slice_into(dst, input, start, length);
+        return;
+    }
+    assert(!"unknown conversion for convert_slice_into");
 }

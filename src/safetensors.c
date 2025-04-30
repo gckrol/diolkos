@@ -12,6 +12,7 @@
 #include "parson.h"
 #include "transformer.h"
 #include "tensor.h"
+#include "utils.h"
 
 Tensor *load_tensor(JSON_Object *o, void * data, const char *name, size_t expected_size, quantization_type target_type) {
     Tensor *tensor = calloc(1, sizeof(Tensor));
@@ -116,7 +117,7 @@ int process_safetensors_file(const char* filepath, Model *st, Config *config) {
         // Check for token embedding
         // TODO: llama.cpp quantizes this to 8b.
         if (strcmp(tensor_name, "model.embed_tokens.weight") == 0 && st->token_embedding_table == NULL) {
-            st->token_embedding_table = load_tensor(header, tensors, tensor_name, config->vocab_size * config->dim, F32);
+            st->token_embedding_table = load_tensor(header, tensors, tensor_name, config->vocab_size * config->dim, Q8_0);
             tensors_found++;
             continue;
         }
@@ -336,6 +337,8 @@ Model *load_safetensors(const char* dir) {
             return NULL;
         }
     }
+
+    init_utils(config->dim, config->hidden_dim);
 
     return st;
 }

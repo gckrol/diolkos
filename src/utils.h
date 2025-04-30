@@ -10,4 +10,7 @@ void rmsnorm(Tensor* o, Tensor* x, Tensor* weight, int size);
 void matmul(Tensor* xout, Tensor* x, Tensor* w, int n, int d);
 void matmul_permuted(Tensor* xout, Tensor* x, Tensor* w, int n, int d, int n_heads);
 
+/// Allocate scratch memory.
+void init_utils(int dim, int hidden_dim);
+
 #endif // UTILS_H
