@@ -13,7 +13,7 @@
 #include "transformer.h"
 #include "tensor.h"
 
-Tensor *load_tensor(JSON_Object *o, void * data, const char *name, size_t expected_size, quantization_type qt) {
+Tensor *load_tensor(JSON_Object *o, void * data, const char *name, size_t expected_size, quantization_type target_type) {
     Tensor *tensor = calloc(1, sizeof(Tensor));
 
     JSON_Object *tensor_obj = json_object_get_object(o, name);
@@ -55,15 +55,17 @@ Tensor *load_tensor(JSON_Object *o, void * data, const char *name, size_t expect
 
     tensor->data = (TensorData*)((uint8_t*)data + start);
 
-    if (qt == tensor->type) {
+    if (target_type == tensor->type) {
         // Matches the requested type.
         return tensor;
-    } else if (qt == Q8_0) {
-        // Quantize.
-        return quantize_Q8_0(tensor);
+    } else if (tensor->type == F32 && target_type == Q8_0) {
+        return convert_f32_q8_0(tensor);
+    } else if (tensor->type == F16 && target_type == Q8_0) {
+        return convert_f16_q8_0(tensor);
+    } else if (tensor->type == F16 && target_type == F32) {
+        return convert_f16_f32(tensor);
     }
-    // TODO: upcast to F32 if needed.
-    fprintf(stderr, "Unsupported quantization type for tensor %s: %d\n", name, qt);
+    fprintf(stderr, "Unsupported conversion of tensor %s:  %d -> %d\n", name, tensor->type, target_type);
     exit(EXIT_FAILURE);
 }
 

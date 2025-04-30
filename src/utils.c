@@ -87,7 +87,7 @@ void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
     float *xout = data_f32(xoutt);
     float *x_float = data_f32(xt);
     int8_t *w = data_i8(wt);
-    float *ws = wt->scales;
+    float *ws = wt->scale;
 
     const int GS = 32;
     const float Q_MAX = 127.0f;
