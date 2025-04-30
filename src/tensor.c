@@ -179,7 +179,7 @@ Tensor *convert_f16_q8_0(Tensor *input) {
 }
 
 Tensor *convert_bf16_q8_0(Tensor *input) {
-    assert(input->type == F16);
+    assert(input->type == BF16);
     Tensor *result = Tensor_create(input->dim, Q8_0);
     const int GS = 32;
     float Q_MAX = 127.0f;
@@ -227,7 +227,7 @@ Tensor *convert_f16_f32(Tensor *input) {
 }
 
 Tensor *convert_bf16_f32(Tensor *input) {
-    assert(input->type == F16);
+    assert(input->type == BF16);
     Tensor *result = Tensor_create(input->dim, F32);
     float *data_result = data_f32(result);
 
