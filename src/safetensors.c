@@ -131,7 +131,7 @@ int process_safetensors_file(const char* filepath, Model *st, Config *config) {
         
         // Check for classifier
         if (strcmp(tensor_name, "lm_head.weight") == 0 && st->wcls == NULL) {
-            st->wcls = load_tensor(header, tensors, tensor_name, config->vocab_size * config->dim, F32);
+            st->wcls = load_tensor(header, tensors, tensor_name, config->vocab_size * config->dim, Q8_0);
             tensors_found++;
             continue;
         }
