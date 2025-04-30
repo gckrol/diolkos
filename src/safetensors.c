@@ -88,7 +88,7 @@ int process_safetensors_file(const char* filepath, Model *st, Config *config) {
     }
     
     // Memory map the file
-    void *data = mmap(NULL, sb.st_size, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
+    void *data = mmap(NULL, sb.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
     if (data == MAP_FAILED) {
         fprintf(stderr, "Failed to mmap file: %s\n", filepath);
         close(fd);
