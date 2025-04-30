@@ -46,9 +46,9 @@ void softmax_f32(float* x, int size) {
 }
 
 void rmsnorm(Tensor* ot, Tensor* xt, Tensor* weightt, int size) {
-    float *o = data_f32(ot);
-    float *x = data_f32(xt);
-    float *weight = data_f32(weightt);
+    float *restrict o = data_f32(ot);
+    float *restrict x = data_f32(xt);
+    float *restrict weight = data_f32(weightt);
 
     // calculate sum of squares
     float ss = 0.0f;
@@ -84,52 +84,50 @@ void matmul_f32(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
 }
 
 void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
-    float *xout = data_f32(xoutt);
-    float *x_float = data_f32(xt);
-    int8_t *w = data_i8(wt);
-    float *ws = wt->scale;
+    Tensor *xt_q8 = convert(xt, Q8_0); // TODO: remove memory allocation.
+
+    float *restrict xout = data_f32(xoutt);
+    int8_t *restrict x = data_i8(xt_q8);
+    float *restrict xs = xt_q8->scale;
+    int8_t *restrict w = data_i8(wt);
+    float *restrict ws = wt->scale;
 
     const int GS = 32;
-    const float Q_MAX = 127.0f;
 
     int i;
     #pragma omp parallel for private(i)
     for (i = 0; i < d; i++) {
-
-        float val = 0.0f;
         int in = i * n;
 
-        // do the matmul in groups of GS
-        int j;
-        for (j = 0; j <= n - GS; j += GS) {
+        // Implemented as a bunch of small groups, so the compiler will
+        // have an easier time vectorizing them.
 
-            //////
-            // We should be able to quantize a block of x here.
-            // TODO: we re-quantize the same block d times...
-            // Better to quantize the entire thing at once before.
-
-            float max_val = 0.0f;
-            for (size_t k = 0; k < GS; k++) {
-                float val = x_float[j + k];
-                if (fabsf(val) > max_val) {
-                    max_val = fabsf(val);
-                }
-            }
-            max_val /= Q_MAX;
-            int8_t x[32];
-            for (size_t k = 0; k < GS; k++) {
-                x[k] = (int8_t) nearbyint(x_float[j + k] / max_val);
-            }                   
-
-            ////
+        int32_t ivals[n / GS];
+        for (int j = 0; j < n; j += GS) {
             int32_t ival = 0;
             for (int k = 0; k < GS; k++) {
-                ival += ((int32_t) x[k]) * ((int32_t) w[in + j + k]);
+                ival += (int32_t)x[j + k] * (int32_t)w[in + j + k];
             }
-            val += ((float) ival) * ws[(in + j) / GS] * max_val;
+            ivals[j / GS] = ival;
         }
+        // Gather the scales in a nice consecutive array for SIMD.
+        float scales[n / GS];
+        for (int j = 0; j < n; j += GS) {
+            scales[j / GS] = ws[(in + j) / GS] * xs[j / GS];
+        }
+        float fvals[n / GS];
+        for (int j = 0; j < n / GS; j++) {
+            fvals[j] = ((float) ivals[j]);
+        }
+        float sum = 0.0f;
+        for (int j = 0; j < n / GS; j++) {
+            sum += fvals[j] * scales[j];
+        }        
+        xout[i] = sum;
+    }
 
-        xout[i] = val;
+    if (xt_q8 != xt) {
+        Tensor_destroy(xt_q8);
     }
 }
 

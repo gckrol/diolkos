@@ -55,18 +55,12 @@ Tensor *load_tensor(JSON_Object *o, void * data, const char *name, size_t expect
 
     tensor->data = (TensorData*)((uint8_t*)data + start);
 
-    if (target_type == tensor->type) {
-        // Matches the requested type.
-        return tensor;
-    } else if (tensor->type == F32 && target_type == Q8_0) {
-        return convert_f32_q8_0(tensor);
-    } else if (tensor->type == F16 && target_type == Q8_0) {
-        return convert_f16_q8_0(tensor);
-    } else if (tensor->type == F16 && target_type == F32) {
-        return convert_f16_f32(tensor);
+    Tensor *result = convert(tensor, target_type);
+    if (!result) {
+        fprintf(stderr, "Unsupported conversion of tensor %s:  %d -> %d\n", name, tensor->type, target_type);
+        exit(EXIT_FAILURE);
     }
-    fprintf(stderr, "Unsupported conversion of tensor %s:  %d -> %d\n", name, tensor->type, target_type);
-    exit(EXIT_FAILURE);
+    return result;
 }
 
 // Process a single safetensors file and load its tensors
@@ -120,6 +114,7 @@ int process_safetensors_file(const char* filepath, Model *st, Config *config) {
         const char *tensor_name = json_object_get_name(header, j);
         
         // Check for token embedding
+        // TODO: llama.cpp quantizes this to 8b.
         if (strcmp(tensor_name, "model.embed_tokens.weight") == 0 && st->token_embedding_table == NULL) {
             st->token_embedding_table = load_tensor(header, tensors, tensor_name, config->vocab_size * config->dim, F32);
             tensors_found++;
