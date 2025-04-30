@@ -40,4 +40,8 @@ void slice(Tensor *dest, Tensor *src, int start);
 float *data_f32(Tensor *tensor);
 int8_t *data_i8(Tensor *tensor);
 
+size_t tensor_memory(Tensor *tensor);
+
+const char* quantization_type_to_string(quantization_type type);
+
 #endif // TENSOR_H

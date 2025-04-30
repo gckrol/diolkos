@@ -41,7 +41,7 @@ typedef struct {
     Tensor* value_cache; // (layer, seq_len, dim)
 } RunState;
 
-typedef struct {
+typedef struct Transformer {
     Config config; // the hyperparameters of the architecture (the blueprint)
     RunState state; // buffers for the "wave" of activations in the forward pass
     Model* safetensors;

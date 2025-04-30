@@ -20,6 +20,7 @@
 #include "transformer.h"
 #include "tokenizer.h"
 #include "sampler.h"
+#include "transfomer_info.h"
 
 // ----------------------------------------------------------------------------
 // utilities: time
@@ -206,7 +207,6 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
     free(prompt_tokens);
 }
 
-
 // ----------------------------------------------------------------------------
 // CLI, include only if not testing
 #ifndef TESTING
@@ -283,6 +283,8 @@ int main(int argc, char *argv[]) {
     // Print elapsed initialization time
     long end_time = time_in_ms();
     fprintf(stderr, "Initialization took %ld ms\n", (end_time - start_time));
+
+    print_transformer_memory(&transformer);
 
     // run!
     if (strcmp(mode, "generate") == 0) {

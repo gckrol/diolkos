@@ -323,3 +323,22 @@ void convert_slice_into(Tensor *dst, Tensor *input, size_t start, size_t length)
     }
     assert(!"unknown conversion for convert_slice_into");
 }
+
+size_t tensor_memory(Tensor *tensor) {
+    size_t result = tensor->dim * quant_size(tensor->type);
+    if (tensor->scale) {
+        result += tensor->dim / group_size(tensor->type) * sizeof(float);
+    }
+    return result;
+}
+
+const char* quantization_type_to_string(quantization_type type) {
+    switch (type) {
+        case F32: return "F32";
+        case F16: return "F16";
+        case BF16: return "BF16";
+        case Q8_0: return "Q8_0";
+        default: assert(!"unknown type");
+    }
+    __builtin_unreachable();
+}
