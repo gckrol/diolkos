@@ -243,7 +243,7 @@ Model *load_safetensors(const char* dir) {
     Model *st = calloc(1, sizeof(Model));
     if (st == NULL) {
         fprintf(stderr, "Failed to allocate memory for Model struct\n");
-        return NULL;
+        exit(EXIT_FAILURE);
     }
     st->config = config;
     st->huggingface_rope = true;
@@ -263,7 +263,7 @@ Model *load_safetensors(const char* dir) {
         fprintf(stderr, "Failed to open directory: %s\n", dir);
         free(layers);
         free(st);
-        return NULL;
+        exit(EXIT_FAILURE);
     }
     
     // Count how many tensors we found
@@ -291,7 +291,7 @@ Model *load_safetensors(const char* dir) {
         fprintf(stderr, "No safetensors files found in directory: %s\n", dir);
         free(layers);
         free(st);
-        return NULL;
+        exit(EXIT_FAILURE);
     }
     
     printf("Loaded %d tensors from safetensors files\n", tensors_loaded);
@@ -302,21 +302,21 @@ Model *load_safetensors(const char* dir) {
         fprintf(stderr, "Missing required tensor: model.embed_tokens.weight\n");
         free(layers);
         free(st);
-        return NULL;
+        exit(EXIT_FAILURE);
     }
     
     if (st->rms_final_weight == NULL) {
         fprintf(stderr, "Missing required tensor: model.norm.weight\n");
         free(layers);
         free(st);
-        return NULL;
+        exit(EXIT_FAILURE);
     }
     
     if (st->wcls == NULL) {
         fprintf(stderr, "Missing required tensor: lm_head.weight\n");
         free(layers);
         free(st);
-        return NULL;
+        exit(EXIT_FAILURE);
     }
     
     // Check all layers
@@ -334,7 +334,7 @@ Model *load_safetensors(const char* dir) {
             fprintf(stderr, "Missing required tensor in layer %d\n", i);
             free(layers);
             free(st);
-            return NULL;
+            exit(EXIT_FAILURE);
         }
     }
 

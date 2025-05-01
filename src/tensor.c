@@ -14,6 +14,13 @@ float bf16_to_float(uint16_t bf16) {
     return u.f;
 }
 
+uint16_t float_to_bf16(float f) {
+    // BF16 has the same exponent bits as FP32 but only the top 7 mantissa bits
+    // To convert: clear bottom 16 bits of the FP32 representation
+    union { uint32_t u; float f; } u = { .f = f };
+    return (uint16_t)(u.u >> 16);
+}
+
 float f16_to_float(uint16_t h) {
     uint32_t sign = (h & 0x8000) << 16;
     uint32_t exp  = (h & 0x7C00) >> 10;
@@ -115,7 +122,60 @@ int8_t *data_i8(Tensor *tensor) {
 //     return (_Float16*)tensor->data;
 // }
 
-void convert_f32_q8_slice_into(Tensor *dst, Tensor *input, size_t start, size_t length) {
+void convert_f32_f32_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t dst_offset) {
+    assert(dst->type == F32);
+    assert(input->type == F32);
+    assert(input->dim >= start+length);
+    assert(dst->dim >= dst_offset+length);
+
+    float *input_data = data_f32(input) + start;
+    float *output_data = data_f32(dst) + dst_offset;
+
+    size_t i;
+    #pragma omp simd
+    for (i = 0; i < length; i++) {
+        output_data[i] = input_data[i];
+    }
+}
+
+void convert_f32_bf16_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t dst_offset) {
+    assert(dst->type == BF16);
+    assert(input->type == F32);
+    assert(input->dim >= start+length);
+    assert(dst->dim >= dst_offset+length);
+    
+    // Access data using explicit uint16_t and uint32_t pointers
+    uint32_t *input_data = (uint32_t*)input->data + start;
+    uint16_t *output_data = (uint16_t*)dst->data + dst_offset;
+    
+    size_t i;
+    #pragma omp simd
+    for (i = 0; i < length; i++) {
+        // Simply take the upper 16 bits of each 32-bit float
+        output_data[i] = (uint16_t)(input_data[i] >> 16);
+    }
+}
+
+void convert_bf16_f32_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t dst_offset) {
+    assert(dst->type == F32);
+    assert(input->type == BF16);
+    assert(input->dim >= start+length);
+    assert(dst->dim >= dst_offset+length);
+    
+    // Access data using explicit uint16_t and uint32_t pointers
+    uint16_t *input_data = (uint16_t*)input->data + start;
+    uint32_t *output_data = (uint32_t*)dst->data + dst_offset;
+    
+    size_t i;
+    #pragma omp simd
+    for (i = 0; i < length; i++) {
+        // Place the 16 bits from BF16 in the upper 16 bits of the 32-bit float
+        // and clear the lower 16 bits
+        output_data[i] = ((uint32_t)input_data[i]) << 16;
+    }
+}
+
+void convert_f32_q8_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t dst_offset) {
     assert(dst->type == Q8_0);
     assert(input->type == F32);
     assert(input->dim >= start+length);
@@ -135,13 +195,17 @@ void convert_f32_q8_slice_into(Tensor *dst, Tensor *input, size_t start, size_t 
             max_val = fmaxf(max_val, fabsf(input_data[i + j]));
         }        
         max_val /= Q_MAX;
-        dst->scale[i / GS] = max_val;
+        dst->scale[(dst_offset + i) / GS] = max_val;
 
         #pragma omp simd
         for (size_t j = 0; j < GS; j++) {
-            output_data[i + j] = (int8_t) roundf(input_data[i + j] / max_val);
+            output_data[dst_offset + i + j] = (int8_t) roundf(input_data[i + j] / max_val);
         }
     }
+}
+
+void convert_f32_q8_slice_into(Tensor *dst, Tensor *input, size_t start, size_t length) {
+    convert_f32_q8_slice_into_offset(dst, input, start, length, 0);
 }
 
 Tensor *convert_f32_q8(Tensor *input) {
@@ -320,8 +384,15 @@ void convert_slice_into(Tensor *dst, Tensor *input, size_t start, size_t length)
     } else if (input->type == F32 && dst->type == Q8_0) {
         convert_f32_q8_slice_into(dst, input, start, length);
         return;
+    } else if (input->type == F32 && dst->type == BF16) {
+        convert_f32_bf16_slice_into_offset(dst, input, start, length, 0);
+        return;
+    } else if (input->type == BF16 && dst->type == F32) {
+        convert_bf16_f32_slice_into_offset(dst, input, start, length, 0);
+        return;
     }
     assert(!"unknown conversion for convert_slice_into");
+    __builtin_unreachable();
 }
 
 size_t tensor_memory(Tensor *tensor) {

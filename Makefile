@@ -6,7 +6,7 @@ CC = gcc -Wall -Wextra -Wpedantic -Wstrict-prototypes -Wpointer-arith -Wcast-qua
 # Source files and object files
 SRC = src/tokenizer.c src/sampler.c src/transformer.c src/utils.c src/safetensors.c src/parson.c src/tensor.c src/transformer_info.c
 OBJ = $(patsubst src/%.c,obj/%.o,$(SRC))
-OPT = -Ofast -fopenmp # -DNDEBUG # -fopt-info-vec -fopt-info-vec-missed
+OPT = -Ofast -fopenmp -fopt-info-vec -fopt-info-vec-missed
 
 .PHONY: all
 all: bin/plainllm bin/stest

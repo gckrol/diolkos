@@ -30,7 +30,11 @@ void Tensor_destroy(Tensor *tensor);
 Tensor *convert(Tensor *input, quantization_type type);
 void convert_into(Tensor *dst, Tensor *input);
 void convert_slice_into(Tensor *dst, Tensor *input, size_t start, size_t length);
-
+void convert_f32_q8_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t dst_offset);
+void convert_f32_f32_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t dst_offset);
+void convert_bf16_f32_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t dst_offset);
+void convert_f32_bf16_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t dst_offset);
+    
 Tensor *convert_f32_q8(Tensor *input);
 Tensor *convert_f16_q8_0(Tensor *input);
 Tensor *convert_f16_f32(Tensor *input);
@@ -39,6 +43,8 @@ void slice(Tensor *dest, Tensor *src, int start);
 
 float *data_f32(Tensor *tensor);
 int8_t *data_i8(Tensor *tensor);
+
+int quant_size(quantization_type type);
 
 size_t tensor_memory(Tensor *tensor);
 

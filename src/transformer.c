@@ -18,10 +18,18 @@ void malloc_run_state(RunState* s, Config* p) {
     s->hb = Tensor_create(p->hidden_dim, F32);
     s->hb2 = Tensor_create(p->hidden_dim, F32);
     s->q = Tensor_create(p->dim, F32);
-    s->key_cache = Tensor_create(p->n_layers * p->seq_len * kv_dim, F32);
-    s->value_cache = Tensor_create(p->n_layers * p->seq_len * kv_dim, F32);
     s->att = Tensor_create(p->n_heads * p->seq_len, F32);
     s->logits = Tensor_create(p->vocab_size, F32);
+
+    // Using BF16 for these saves memory, but is slower.
+    s->key_cache = Tensor_create(p->n_layers * p->seq_len * kv_dim, BF16);
+    s->value_cache = Tensor_create(p->n_layers * p->seq_len * kv_dim, BF16);
+
+    s->k = Tensor_create(kv_dim, F32);
+    s->v = Tensor_create(kv_dim, F32);
+
+    int head_size = p->dim / p->n_heads;
+    s->kvtemp = Tensor_create(head_size, F32);
 }
 
 void build_transformer_from_safetensors(Transformer *t, const char* model_path) {
@@ -74,16 +82,10 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
         // key and value point to the kv cache
         int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
 
-        // Slice these from the kv cache.
-        Tensor k;
-        slice(&k, s->key_cache, loff + pos * kv_dim);
-        Tensor v;
-        slice(&v, s->value_cache, loff + pos * kv_dim);
-
         // qkv matmuls for this position
         matmul(s->q, s->xb, layer->wq, dim, attention_dim);
-        matmul(&k, s->xb, layer->wk, dim, kv_dim);
-        matmul(&v, s->xb, layer->wv, dim, kv_dim);
+        matmul(s->k, s->xb, layer->wk, dim, kv_dim);
+        matmul(s->v, s->xb, layer->wv, dim, kv_dim);
 
         if (st->huggingface_rope) {
             // RoPE relative positional encoding: using complex number rotation like in lm.rs
@@ -111,10 +113,10 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
                         int k_idx1 = (i * head_size) + j;
                         int k_idx2 = (i * head_size) + j + (head_size/2);
                         
-                        float k0 = data_f32(&k)[k_idx1];
-                        float k1 = data_f32(&k)[k_idx2];
-                        data_f32(&k)[k_idx1] = k0 * fcr - k1 * fci;
-                        data_f32(&k)[k_idx2] = k0 * fci + k1 * fcr;
+                        float k0 = data_f32(s->k)[k_idx1];
+                        float k1 = data_f32(s->k)[k_idx2];
+                        data_f32(s->k)[k_idx1] = k0 * fcr - k1 * fci;
+                        data_f32(s->k)[k_idx2] = k0 * fci + k1 * fcr;
                     }
                 }
             }
@@ -128,7 +130,7 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
                 float fci = sinf(val);
                 int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
                 for (int v = 0; v < rotn; v++) {
-                    Tensor* vec = v == 0 ? s->q : &k; // the vector to rotate (query or key)
+                    Tensor* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
                     float v0 = data_f32(vec)[i];
                     float v1 = data_f32(vec)[i+1];
                     data_f32(vec)[i] = v0 * fcr - v1 * fci;
@@ -137,10 +139,18 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
             }            
         }
 
+        // copy the key and value into the kv cache (quantized)
+        // The `+ pos * kv_dim` is to write it in the next position.
+        // convert_f32_q8_slice_into_offset(s->key_cache, s->k, 0, kv_dim, loff + pos * kv_dim);
+        // convert_f32_q8_slice_into_offset(s->value_cache, s->v, 0, kv_dim, loff + pos * kv_dim);
+        // convert_f32_f32_slice_into_offset(s->key_cache, s->k, 0, kv_dim, loff + pos * kv_dim);
+        // convert_f32_f32_slice_into_offset(s->value_cache, s->v, 0, kv_dim, loff + pos * kv_dim);
+        convert_f32_bf16_slice_into_offset(s->key_cache, s->k, 0, kv_dim, loff + pos * kv_dim);
+        convert_f32_bf16_slice_into_offset(s->value_cache, s->v, 0, kv_dim, loff + pos * kv_dim);
 
         // multihead attention. iterate over all heads
         int h;
-        #pragma omp parallel for private(h)
+        // #pragma omp parallel for private(h) // Disabled due to the use of s->kvtemp.
         for (h = 0; h < p->n_heads; h++) {
             // get the query vector for this head
             float* q = data_f32(s->q) + h * head_size;
@@ -149,7 +159,9 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos; t++) {
                 // get the key vector for this head and at this timestep
-                float* k = data_f32(s->key_cache) + loff + t * kv_dim + (h / kv_mul) * head_size;
+                convert_slice_into(s->kvtemp, s->key_cache, loff + t * kv_dim + (h / kv_mul) * head_size, head_size);
+                float *k = data_f32(s->kvtemp);
+
                 // calculate the attention score as the dot product of q and k
                 float score = 0.0f;
                 for (int i = 0; i < head_size; i++) {
@@ -168,7 +180,9 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
             memset(xb, 0, head_size * sizeof(float));
             for (int t = 0; t <= pos; t++) {
                 // get the value vector for this head and at this timestep
-                float* v = data_f32(s->value_cache) + loff + t * kv_dim + (h / kv_mul) * head_size;
+                convert_slice_into(s->kvtemp, s->value_cache, loff + t * kv_dim + (h / kv_mul) * head_size, head_size);
+                float *v = data_f32(s->kvtemp);
+
                 // get the attention weight for this timestep
                 float a = att[t];
                 // accumulate the weighted value into xb

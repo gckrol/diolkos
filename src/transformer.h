@@ -39,6 +39,10 @@ typedef struct {
     // kv cache
     Tensor* key_cache;   // (layer, seq_len, dim)
     Tensor* value_cache; // (layer, seq_len, dim)
+
+    Tensor* k; // F32 dequantized key
+    Tensor* v; // F32 dequantized value
+    Tensor* kvtemp; // F32 dequantized value
 } RunState;
 
 typedef struct Transformer {
