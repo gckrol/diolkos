@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <assert.h>
 
 #include "transformer.h"
 #include "utils.h"
@@ -14,7 +15,11 @@ static Tensor *temp_q8 = NULL;
 
 static int max(int a, int b) {
     return (a > b) ? a : b;
-}   
+}
+
+static int min(int a, int b) {
+    return (a < b) ? a : b;
+}
 
 /**
  * Forward pass, specialized for Q8 quantization, with everything fused.
@@ -39,6 +44,17 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
     if (!temp_q8) {
         // TODO not the cleanest way to allocate, should be in runstate.
         temp_q8 = Tensor_create(max(dim, hidden_dim), Q8_0);
+    }
+
+    // Precomputed fcr and fci for RoPE
+    float fcr[head_size/2];
+    float fci[head_size/2];
+    for (int j = 0; j < head_size/2; j++) {
+        int head_dim = j * 2;
+        float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+        float val = pos * freq;
+        fcr[j] = cosf(val);
+        fci[j] = sinf(val);
     }
 
     // copy the token embedding into x
@@ -207,17 +223,12 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         //////////////////////////////////////
         // RoPE relative positional encoding
 
+        assert(st->huggingface_rope);
         if (st->huggingface_rope) {
             // RoPE relative positional encoding: using complex number rotation like in lm.rs
             for (int i = 0; i < p->n_heads; i++) {
                 #pragma omp simd
                 for (int j = 0; j < head_size/2; j++) {
-                    int head_dim = j * 2;
-                    float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-                    float val = pos * freq;
-                    float fcr = cosf(val);
-                    float fci = sinf(val);
-                    
                     // Calculate indices for the first and second element in each pair
                     int q_idx1 = (i * head_size) + j;
                     int q_idx2 = (i * head_size) + j + (head_size/2);
@@ -225,20 +236,19 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
                     // For query vector - apply complex number rotation
                     float q0 = q_data[q_idx1];
                     float q1 = q_data[q_idx2];
-                    q_data[q_idx1] = q0 * fcr - q1 * fci;
-                    q_data[q_idx2] = q0 * fci + q1 * fcr;
-                    
+                    q_data[q_idx1] = q0 * fcr[j] - q1 * fci[j];
+                    q_data[q_idx2] = q0 * fci[j] + q1 * fcr[j];
+                }
+                #pragma omp simd
+                for (int j = 0; j < min(head_size/2, kv_dim - i*head_size - head_size/2); j++) {
                     // For key vector - check if this head's key part is within kv_dim
-                    // This is equivalent to the "rotn" logic in the Rust code
-                    if ((i*head_size) + j + (head_size/2) < kv_dim) {
-                        int k_idx1 = (i * head_size) + j;
-                        int k_idx2 = (i * head_size) + j + (head_size/2);
-                        
-                        float k0 = k_data[k_idx1];
-                        float k1 = k_data[k_idx2];
-                        k_data[k_idx1] = k0 * fcr - k1 * fci;
-                        k_data[k_idx2] = k0 * fci + k1 * fcr;
-                    }
+                    int k_idx1 = (i * head_size) + j;
+                    int k_idx2 = (i * head_size) + j + (head_size/2);
+                    
+                    float k0 = k_data[k_idx1];
+                    float k1 = k_data[k_idx2];
+                    k_data[k_idx1] = k0 * fcr[j] - k1 * fci[j];
+                    k_data[k_idx2] = k0 * fci[j] + k1 * fcr[j];
                 }
             }
         } else {
