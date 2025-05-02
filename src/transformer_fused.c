@@ -265,6 +265,7 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
                 float v1 = q_data[i+1];
                 q_data[i] = v0 * fcr - v1 * fci;
                 q_data[i+1] = v0 * fci + v1 * fcr;
+                // TODO: split this up just like in the RoPE code above.
                 if (i < kv_dim) {
                     float v0 = k_data[i];
                     float v1 = k_data[i+1];
@@ -294,13 +295,15 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos; t++) {
                 // get the key vector for this head and at this timestep
-                convert_slice_into(s->kvtemp, s->key_cache, loff + t * kv_dim + (h / kv_mul) * head_size, head_size);
-                float *k = data_f32(s->kvtemp);
+                uint16_t *data = (uint16_t*)s->key_cache->data + loff + t * kv_dim + (h / kv_mul) * head_size;
 
                 // calculate the attention score as the dot product of q and k
                 float score = 0.0f;
+                #pragma omp simd
                 for (int i = 0; i < head_size; i++) {
-                    score += q[i] * k[i];
+                    uint32_t bits = ((uint32_t)data[i]) << 16;
+                    union { uint32_t u; float f; } u = { bits };
+                    score += q[i] * u.f;
                 }
                 score /= sqrtf(head_size);
                 // save the score to the attention buffer
@@ -315,14 +318,16 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
             memset(xb, 0, head_size * sizeof(float));
             for (int t = 0; t <= pos; t++) {
                 // get the value vector for this head and at this timestep
-                convert_slice_into(s->kvtemp, s->value_cache, loff + t * kv_dim + (h / kv_mul) * head_size, head_size);
-                float *v = data_f32(s->kvtemp);
+                uint16_t *data = (uint16_t*)s->value_cache->data + loff + t * kv_dim + (h / kv_mul) * head_size;
 
                 // get the attention weight for this timestep
                 float a = att[t];
                 // accumulate the weighted value into xb
+                #pragma omp simd
                 for (int i = 0; i < head_size; i++) {
-                    xb[i] += a * v[i];
+                    uint32_t bits = ((uint32_t)data[i]) << 16;
+                    union { uint32_t u; float f; } u = { bits };                    
+                    xb[i] += a * u.f;
                 }
             }
         }
