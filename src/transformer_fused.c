@@ -365,7 +365,48 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         }
 
         // final matmul to get the output of the ffn
-        matmul(s->xb, s->hb, layer->w2, hidden_dim, dim);
+        // matmul(s->xb, s->hb, layer->w2, hidden_dim, dim);
+        convert_into(temp_q8, s->hb);
+
+        int8_t * w2_data = data_i8(layer->w2);
+        float * w2_scale = layer->w2->scale;
+    
+        #pragma omp parallel for private(i)
+        for (i = 0; i < dim; i++) {
+            int in = i * hidden_dim;
+    
+            // Implemented as a bunch of small groups, so the compiler will
+            // have an easier time vectorizing them.
+    
+            int32_t ivals_q[hidden_dim / GS];
+            for (int j = 0; j < hidden_dim; j += GS) {
+                int32_t ival_q = 0;
+                #pragma omp simd
+                for (int k = 0; k < GS; k++) {
+                    ival_q += (int32_t)temp_data[j + k] * (int32_t)w2_data[in + j + k];
+                }
+                ivals_q[j / GS] = ival_q;
+            }
+            // Gather the scales in a nice consecutive array for SIMD.
+            float scales_q[hidden_dim / GS];
+            #pragma omp simd
+            for (int j = 0; j < hidden_dim / GS; j++) {
+                scales_q[j] = w2_scale[in / GS + j] * temp_scale[j];
+            }
+            float fvals_q[hidden_dim / GS];
+            #pragma omp simd
+            for (int j = 0; j < hidden_dim / GS; j++) {
+                fvals_q[j] = ((float) ivals_q[j]);
+            }
+            float sum_q = 0.0f;
+            #pragma omp simd
+            for (int j = 0; j < hidden_dim / GS; j++) {
+                sum_q += fvals_q[j] * scales_q[j];
+            }        
+            xb_data[i] = sum_q;
+        }        
+
+        ////
 
         // residual connection
         #pragma omp simd
