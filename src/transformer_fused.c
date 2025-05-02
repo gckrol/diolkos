@@ -210,6 +210,7 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         if (st->huggingface_rope) {
             // RoPE relative positional encoding: using complex number rotation like in lm.rs
             for (int i = 0; i < p->n_heads; i++) {
+                #pragma omp simd
                 for (int j = 0; j < head_size/2; j++) {
                     int head_dim = j * 2;
                     float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
@@ -222,10 +223,10 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
                     int q_idx2 = (i * head_size) + j + (head_size/2);
                     
                     // For query vector - apply complex number rotation
-                    float q0 = data_f32(s->q)[q_idx1];
-                    float q1 = data_f32(s->q)[q_idx2];
-                    data_f32(s->q)[q_idx1] = q0 * fcr - q1 * fci;
-                    data_f32(s->q)[q_idx2] = q0 * fci + q1 * fcr;
+                    float q0 = q_data[q_idx1];
+                    float q1 = q_data[q_idx2];
+                    q_data[q_idx1] = q0 * fcr - q1 * fci;
+                    q_data[q_idx2] = q0 * fci + q1 * fcr;
                     
                     // For key vector - check if this head's key part is within kv_dim
                     // This is equivalent to the "rotn" logic in the Rust code
@@ -233,10 +234,10 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
                         int k_idx1 = (i * head_size) + j;
                         int k_idx2 = (i * head_size) + j + (head_size/2);
                         
-                        float k0 = data_f32(s->k)[k_idx1];
-                        float k1 = data_f32(s->k)[k_idx2];
-                        data_f32(s->k)[k_idx1] = k0 * fcr - k1 * fci;
-                        data_f32(s->k)[k_idx2] = k0 * fci + k1 * fcr;
+                        float k0 = k_data[k_idx1];
+                        float k1 = k_data[k_idx2];
+                        k_data[k_idx1] = k0 * fcr - k1 * fci;
+                        k_data[k_idx2] = k0 * fci + k1 * fcr;
                     }
                 }
             }
@@ -248,15 +249,19 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
                 float val = pos * freq;
                 float fcr = cosf(val);
                 float fci = sinf(val);
-                int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
-                for (int v = 0; v < rotn; v++) {
-                    Tensor* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
-                    float v0 = data_f32(vec)[i];
-                    float v1 = data_f32(vec)[i+1];
-                    data_f32(vec)[i] = v0 * fcr - v1 * fci;
-                    data_f32(vec)[i+1] = v0 * fci + v1 * fcr;
+
+                // Note: untested refactor.
+                float v0 = q_data[i];
+                float v1 = q_data[i+1];
+                q_data[i] = v0 * fcr - v1 * fci;
+                q_data[i+1] = v0 * fci + v1 * fcr;
+                if (i < kv_dim) {
+                    float v0 = k_data[i];
+                    float v1 = k_data[i+1];
+                    k_data[i] = v0 * fcr - v1 * fci;
+                    k_data[i+1] = v0 * fci + v1 * fcr;
                 }
-            }            
+    }            
         }
 
         // copy the key and value into the kv cache (quantized)
@@ -315,9 +320,11 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         // final matmul to get the output of the attention
         matmul(s->xb2, s->xb, layer->wo, dim, dim);
 
+        float *xb2_data = data_f32(s->xb2);
+
         // residual connection back into x
         for (int i = 0; i < dim; i++) {
-            data_f32(x)[i] += data_f32(s->xb2)[i];
+            x_data[i] += xb2_data[i];
         }
 
         // ffn rmsnorm
@@ -328,14 +335,17 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         matmul(s->hb, s->xb, layer->w1, dim, hidden_dim);
         matmul(s->hb2, s->xb, layer->w3, dim, hidden_dim);
 
+        float *hb_data = data_f32(s->hb);
+        float *hb2_data = data_f32(s->hb2);
+
         // SwiGLU non-linearity
         for (int i = 0; i < hidden_dim; i++) {
             float val = data_f32(s->hb)[i];
             // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
             val *= (1.0f / (1.0f + expf(-val)));
             // elementwise multiply with w3(x)
-            val *= data_f32(s->hb2)[i];
-            data_f32(s->hb)[i] = val;
+            val *= hb2_data[i];
+            hb_data[i] = val;
         }
 
         // final matmul to get the output of the ffn
@@ -343,7 +353,7 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
 
         // residual connection
         for (int i = 0; i < dim; i++) {
-            data_f32(x)[i] += data_f32(s->xb)[i];
+            x_data[i] += xb_data[i];
         }
     }
 
