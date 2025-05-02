@@ -52,6 +52,7 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         //////////////////////
         // attention rmsnorm
         // rmsnorm(s->xb, x, layer->rms_att_weight, dim);
+        // void rmsnorm(Tensor* ot, Tensor* xt, Tensor* weightt, int size)
 
         float *restrict xb_data = data_f32(s->xb);
         float *restrict x_data = data_f32(x);
@@ -59,16 +60,16 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
     
         // calculate sum of squares
         float ss = 0.0f;
-        for (int j = 0; j < dim; j++) {
+        for (int j = 0; j < s->xb->dim; j++) {
             ss += x_data[j] * x_data[j];
         }
-        ss /= dim;
+        ss /= s->xb->dim;
         ss += 1e-5f;
         ss = 1.0f / sqrtf(ss);
-        // normalize and scale
-        for (int j = 0; j < dim; j++) {
-            xb_data[j] = weight_data[j] * (ss * x_data[j]);
-        }        
+        // normalize and scale (fused into quant below)
+        // for (int j = 0; j < s->xb->dim; j++) {
+        //     xb_data[j] = weight_data[j] * (ss * x_data[j]);
+        // }        
 
         //////////////////////////////////
         // qkv matmuls for this position
@@ -90,6 +91,8 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
             float max_val = 0.0f;
             #pragma omp simd
             for (int j = 0; j < GS; j++) {
+                // Normalize and scale (fused into here).
+                xb_data[it + j] = weight_data[it + j] * (ss * x_data[it + j]);
                 max_val = fmaxf(max_val, fabsf(xb_data[it + j]));
             }        
             max_val /= Q_MAXF;
