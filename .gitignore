@@ -16,3 +16,6 @@ perf.data
 
 # Python
 __pycache__/
+
+# Development notes that don't need to be committed.
+/notes
