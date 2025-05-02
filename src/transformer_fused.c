@@ -117,12 +117,6 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         float *restrict q_data = data_f32(s->q);
         int8_t *restrict wq_data = data_i8(layer->wq);
         float *restrict wq_scale = layer->wq->scale;
-        float *restrict k_data = data_f32(s->k);
-        int8_t *restrict wk_data = data_i8(layer->wk);
-        float *restrict wk_scale = layer->wk->scale;
-        float *restrict v_data = data_f32(s->v);
-        int8_t *restrict wv_data = data_i8(layer->wv);
-        float *restrict wv_scale = layer->wv->scale;
     
         int i;
         #pragma omp parallel for private(i)
@@ -133,51 +127,77 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
             // have an easier time vectorizing them.
     
             int32_t ivals_q[dim / GS];
+            for (int j = 0; j < dim; j += GS) {
+                int32_t ival_q = 0;
+                #pragma omp simd
+                for (int k = 0; k < GS; k++) {
+                    ival_q += (int32_t)temp_data[j + k] * (int32_t)wq_data[in + j + k];
+                }
+                ivals_q[j / GS] = ival_q;
+            }
+            // Gather the scales in a nice consecutive array for SIMD.
+            float scales_q[dim / GS];
+            #pragma omp simd
+            for (int j = 0; j < dim / GS; j++) {
+                scales_q[j] = wq_scale[in / GS + j] * temp_scale[j];
+            }
+            float fvals_q[dim / GS];
+            #pragma omp simd
+            for (int j = 0; j < dim / GS; j++) {
+                fvals_q[j] = ((float) ivals_q[j]);
+            }
+            float sum_q = 0.0f;
+            #pragma omp simd
+            for (int j = 0; j < dim / GS; j++) {
+                sum_q += fvals_q[j] * scales_q[j];
+            }        
+            q_data[i] = sum_q;
+        }
+
+        float *restrict k_data = data_f32(s->k);
+        int8_t *restrict wk_data = data_i8(layer->wk);
+        float *restrict wk_scale = layer->wk->scale;
+        float *restrict v_data = data_f32(s->v);
+        int8_t *restrict wv_data = data_i8(layer->wv);
+        float *restrict wv_scale = layer->wv->scale;        
+        #pragma omp parallel for private(i)
+        for (i = 0; i < kv_dim; i++) {
+            int in = i * dim;
+    
             int32_t ivals_k[dim / GS];
             int32_t ivals_v[dim / GS];
             for (int j = 0; j < dim; j += GS) {
-                int32_t ival_q = 0;
                 int32_t ival_k = 0;
                 int32_t ival_v = 0;
                 #pragma omp simd
                 for (int k = 0; k < GS; k++) {
-                    ival_q += (int32_t)temp_data[j + k] * (int32_t)wq_data[in + j + k];
                     ival_k += (int32_t)temp_data[j + k] * (int32_t)wk_data[in + j + k];
                     ival_v += (int32_t)temp_data[j + k] * (int32_t)wv_data[in + j + k];
                 }
-                ivals_q[j / GS] = ival_q;
                 ivals_k[j / GS] = ival_k;
                 ivals_v[j / GS] = ival_v;
             }
-            // Gather the scales in a nice consecutive array for SIMD.
-            float scales_q[dim / GS];
             float scales_k[dim / GS];
             float scales_v[dim / GS];
             #pragma omp simd
             for (int j = 0; j < dim / GS; j++) {
-                scales_q[j] = wq_scale[in / GS + j] * temp_scale[j];
                 scales_k[j] = wk_scale[in / GS + j] * temp_scale[j];
                 scales_v[j] = wv_scale[in / GS + j] * temp_scale[j];
             }
-            float fvals_q[dim / GS];
             float fvals_k[dim / GS];
             float fvals_v[dim / GS];
             #pragma omp simd
             for (int j = 0; j < dim / GS; j++) {
-                fvals_q[j] = ((float) ivals_q[j]);
                 fvals_k[j] = ((float) ivals_k[j]);
                 fvals_v[j] = ((float) ivals_v[j]);
             }
-            float sum_q = 0.0f;
             float sum_k = 0.0f;
             float sum_v = 0.0f;
             #pragma omp simd
             for (int j = 0; j < dim / GS; j++) {
-                sum_q += fvals_q[j] * scales_q[j];
                 sum_k += fvals_k[j] * scales_k[j];
                 sum_v += fvals_v[j] * scales_v[j];
             }        
-            q_data[i] = sum_q;
             k_data[i] = sum_k;
             v_data[i] = sum_v;
         }        
