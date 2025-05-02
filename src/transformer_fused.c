@@ -54,9 +54,9 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         // rmsnorm(s->xb, x, layer->rms_att_weight, dim);
         // void rmsnorm(Tensor* ot, Tensor* xt, Tensor* weightt, int size)
 
-        float *restrict xb_data = data_f32(s->xb);
-        float *restrict x_data = data_f32(x);
-        float *restrict weight_data = data_f32(layer->rms_att_weight);
+        float * xb_data = data_f32(s->xb);
+        float * x_data = data_f32(x);
+        float * weight_data = data_f32(layer->rms_att_weight);
     
         // calculate sum of squares
         float ss = 0.0f;
@@ -83,8 +83,8 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         // convert_into(temp_q8, s->xb);
         // void convert_f32_q8_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t dst_offset);
     
-        int8_t *restrict temp_data = data_i8(temp_q8);
-        float *restrict temp_scale = temp_q8->scale;        
+        int8_t * temp_data = data_i8(temp_q8);
+        float * temp_scale = temp_q8->scale;        
     
         size_t it;
         #pragma omp parallel for private(it)
@@ -114,9 +114,9 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
 
         // void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d)
 
-        float *restrict q_data = data_f32(s->q);
-        int8_t *restrict wq_data = data_i8(layer->wq);
-        float *restrict wq_scale = layer->wq->scale;
+        float * q_data = data_f32(s->q);
+        int8_t * wq_data = data_i8(layer->wq);
+        float * wq_scale = layer->wq->scale;
     
         int i;
         #pragma omp parallel for private(i)
@@ -154,12 +154,12 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
             q_data[i] = sum_q;
         }
 
-        float *restrict k_data = data_f32(s->k);
-        int8_t *restrict wk_data = data_i8(layer->wk);
-        float *restrict wk_scale = layer->wk->scale;
-        float *restrict v_data = data_f32(s->v);
-        int8_t *restrict wv_data = data_i8(layer->wv);
-        float *restrict wv_scale = layer->wv->scale;        
+        float * k_data = data_f32(s->k);
+        int8_t * wk_data = data_i8(layer->wk);
+        float * wk_scale = layer->wk->scale;
+        float * v_data = data_f32(s->v);
+        int8_t * wv_data = data_i8(layer->wv);
+        float * wv_scale = layer->wv->scale;        
         #pragma omp parallel for private(i)
         for (i = 0; i < kv_dim; i++) {
             int in = i * dim;

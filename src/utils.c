@@ -46,9 +46,9 @@ void softmax_f32(float* x, int size) {
 }
 
 void rmsnorm(Tensor* ot, Tensor* xt, Tensor* weightt, int size) {
-    float *restrict o = data_f32(ot);
-    float *restrict x = data_f32(xt);
-    float *restrict weight = data_f32(weightt);
+    float * o = data_f32(ot);
+    float * x = data_f32(xt);
+    float * weight = data_f32(weightt);
 
     // calculate sum of squares
     float ss = 0.0f;
@@ -95,11 +95,11 @@ void init_utils(int dim, int hidden_dim) {
 void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
     convert_into(temp_q8, xt);
 
-    float *restrict xout_data = data_f32(xoutt);
-    int8_t *restrict x_data = data_i8(temp_q8);
-    float *restrict x_scale = temp_q8->scale;
-    int8_t *restrict w_data = data_i8(wt);
-    float *restrict w_scale = wt->scale;
+    float * xout_data = data_f32(xoutt);
+    int8_t * x_data = data_i8(temp_q8);
+    float * x_scale = temp_q8->scale;
+    int8_t * w_data = data_i8(wt);
+    float * w_scale = wt->scale;
 
     const int GS = 32;
 
