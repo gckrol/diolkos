@@ -77,9 +77,9 @@ Tensor *Tensor_create(size_t size, quantization_type type) {
     Tensor *tensor = calloc(1, sizeof(Tensor));
     tensor->type = type;
     tensor->dim = size;
-    tensor->data = calloc(size, quant_size(type));
+    tensor->data = aligned_alloc(32, size * quant_size(type));
     if (type == Q8_0) {
-        tensor->scale = calloc(size / 32, sizeof(float));
+        tensor->scale = aligned_alloc(32, size / 32 * sizeof(float));
     }
     return tensor;
 }

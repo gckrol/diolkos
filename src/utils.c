@@ -113,10 +113,13 @@ void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
 
         int32_t ivals[n / GS];
         for (int j = 0; j < n; j += GS) {
+            int8_t *x_start = __builtin_assume_aligned(x_data + j, 32);
+            int8_t *w_start = __builtin_assume_aligned(w_data + in + j, 32);
+
             int32_t ival = 0;
             #pragma omp simd
             for (int k = 0; k < GS; k++) {
-                ival += (int32_t)x_data[j + k] * (int32_t)w_data[in + j + k];
+                ival += (int32_t)x_start[k] * (int32_t)w_start[k];
             }
             ivals[j / GS] = ival;
         }

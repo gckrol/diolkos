@@ -1,27 +1,31 @@
 # choose your compiler, e.g. gcc/clang
 # example override to clang: make run CC=clang
 # Currently, gcc seems to be better at vectorizing.
-CC = gcc -Wall -Wextra -Wpedantic -Wstrict-prototypes -Wpointer-arith -Wcast-qual -Wwrite-strings
+
+WARN = -Wall -Wextra -Wpedantic -Wstrict-prototypes -Wpointer-arith -Wcast-qual -Wwrite-strings
+# CC = gcc $(WARN) -fopt-info-vec
+CC = clang $(WARN) -Wno-gnu-folding-constant -Rpass=loop-vectorize -Rpass-missed=loop-vectorize -Rpass-analysis=loop-vectorize -fno-unroll-loops
+
 
 # Source files and object files
 SRC = src/tokenizer.c src/sampler.c src/transformer.c src/utils.c src/safetensors.c src/parson.c src/tensor.c src/transformer_info.c src/transformer_fused.c
 OBJ = $(patsubst src/%.c,obj/%.o,$(SRC))
-OPT = -Ofast -flto -fopt-info-vec -fopenmp #-fopenmp-simd # -fopt-info-vec-missed # -fopenmp # -fopt-info-vec-missed
+OPT = -Ofast -march=native -flto -fopenmp #-fopenmp-simd # -fopt-info-vec-missed # -fopenmp # -fopt-info-vec-missed
 
 .PHONY: all
 all: bin/plainllm bin/stest
 
 bin/plainllm: obj/main.o $(OBJ)
 	@mkdir -p bin
-	$(CC) $(OPT) -march=native -g -o $@ $^ -lm
+	$(CC) $(OPT) -g -o $@ $^ -lm
 
 bin/stest: obj/stest.o $(OBJ)
 	@mkdir -p bin
-	$(CC) $(OPT) -march=native -g -o $@ $^ -lm
+	$(CC) $(OPT) -g -o $@ $^ -lm
 
 obj/%.o: src/%.c
 	@mkdir -p obj
-	$(CC) $(OPT) -march=native -g -c -o $@ $<
+	$(CC) $(OPT) -g -c -o $@ $<
 
 # Useful for testing - build + run with the small stories model.
 .PHONY: run
