@@ -83,7 +83,7 @@ void matmul_f32(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
     }
 }
 
-int max(int a, int b) {
+static int max(int a, int b) {
     return (a > b) ? a : b;
 }   
 
@@ -95,11 +95,11 @@ void init_utils(int dim, int hidden_dim) {
 void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
     convert_into(temp_q8, xt);
 
-    float *restrict xout = data_f32(xoutt);
-    int8_t *restrict x = data_i8(temp_q8);
-    float *restrict xs = temp_q8->scale;
-    int8_t *restrict w = data_i8(wt);
-    float *restrict ws = wt->scale;
+    float *restrict xout_data = data_f32(xoutt);
+    int8_t *restrict x_data = data_i8(temp_q8);
+    float *restrict x_scale = temp_q8->scale;
+    int8_t *restrict w_data = data_i8(wt);
+    float *restrict w_scale = wt->scale;
 
     const int GS = 32;
 
@@ -115,14 +115,14 @@ void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
         for (int j = 0; j < n; j += GS) {
             int32_t ival = 0;
             for (int k = 0; k < GS; k++) {
-                ival += (int32_t)x[j + k] * (int32_t)w[in + j + k];
+                ival += (int32_t)x_data[j + k] * (int32_t)w_data[in + j + k];
             }
             ivals[j / GS] = ival;
         }
         // Gather the scales in a nice consecutive array for SIMD.
         float scales[n / GS];
         for (int j = 0; j < n; j += GS) {
-            scales[j / GS] = ws[(in + j) / GS] * xs[j / GS];
+            scales[j / GS] = w_scale[(in + j) / GS] * x_scale[j / GS];
         }
         float fvals[n / GS];
         for (int j = 0; j < n / GS; j++) {
@@ -132,7 +132,7 @@ void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
         for (int j = 0; j < n / GS; j++) {
             sum += fvals[j] * scales[j];
         }        
-        xout[i] = sum;
+        xout_data[i] = sum;
     }
 }
 

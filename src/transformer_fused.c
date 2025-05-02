@@ -10,6 +10,12 @@
 #include "utils.h"
 #include "safetensors.h"
 
+static Tensor *temp_q8 = NULL;
+
+static int max(int a, int b) {
+    return (a > b) ? a : b;
+}   
+
 /**
  * Forward pass, specialized for Q8 quantization, with everything fused.
  * This should help performance.
@@ -27,6 +33,11 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
     int head_size = dim / p->n_heads;
     int attention_dim = p->n_heads * head_size;
 
+    if (!temp_q8) {
+        // TODO not the cleanest way to allocate, should be in runstate.
+        temp_q8 = Tensor_create(max(dim, hidden_dim), Q8_0);
+    }
+
     // copy the token embedding into x
     convert_slice_into(x, st->token_embedding_table, token * dim, dim);
 
@@ -40,30 +51,80 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         // rmsnorm(s->xb, x, layer->rms_att_weight, dim);
 
         float *restrict o_data = data_f32(s->xb);
-        float *restrict x_data = data_f32(x);
+        float *restrict xb_data = data_f32(x);
         float *restrict weight_data = data_f32(layer->rms_att_weight);
     
         // calculate sum of squares
         float ss = 0.0f;
         for (int j = 0; j < dim; j++) {
-            ss += x_data[j] * x_data[j];
+            ss += xb_data[j] * xb_data[j];
         }
         ss /= dim;
         ss += 1e-5f;
         ss = 1.0f / sqrtf(ss);
         // normalize and scale
         for (int j = 0; j < dim; j++) {
-            o_data[j] = weight_data[j] * (ss * x_data[j]);
+            o_data[j] = weight_data[j] * (ss * xb_data[j]);
         }        
 
-        ////////////////////////////////////////
+        //////////////////////////////////
+        // qkv matmuls for this position
+
         // key and value point to the kv cache
         int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
 
-        // qkv matmuls for this position
-        matmul(s->q, s->xb, layer->wq, dim, attention_dim);
+        // F32, F32, Q8_0
+        // matmul(s->q, s->xb, layer->wq, dim, attention_dim);
+        // void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d)
+
+        convert_into(temp_q8, s->xb);
+
+        float *restrict q_data = data_f32(s->q);
+        int8_t *restrict xb_q_data = data_i8(temp_q8);
+        float *restrict xb_q_scale = temp_q8->scale;
+        int8_t *restrict wq_data = data_i8(layer->wq);
+        float *restrict wq_scale = layer->wq->scale;
+    
+        const int GS = 32;
+    
+        int i;
+        #pragma omp parallel for private(i)
+        for (i = 0; i < attention_dim; i++) {
+            int in = i * dim;
+    
+            // Implemented as a bunch of small groups, so the compiler will
+            // have an easier time vectorizing them.
+    
+            int32_t ivals[dim / GS];
+            for (int j = 0; j < dim; j += GS) {
+                int32_t ival = 0;
+                for (int k = 0; k < GS; k++) {
+                    ival += (int32_t)xb_q_data[j + k] * (int32_t)wq_data[in + j + k];
+                }
+                ivals[j / GS] = ival;
+            }
+            // Gather the scales in a nice consecutive array for SIMD.
+            float scales[dim / GS];
+            for (int j = 0; j < dim; j += GS) {
+                scales[j / GS] = wq_scale[(in + j) / GS] * xb_q_scale[j / GS];
+            }
+            float fvals[dim / GS];
+            for (int j = 0; j < dim / GS; j++) {
+                fvals[j] = ((float) ivals[j]);
+            }
+            float sum = 0.0f;
+            for (int j = 0; j < dim / GS; j++) {
+                sum += fvals[j] * scales[j];
+            }        
+            q_data[i] = sum;
+        }        
+
+        ////
         matmul(s->k, s->xb, layer->wk, dim, kv_dim);
         matmul(s->v, s->xb, layer->wv, dim, kv_dim);
+
+        //////////////////////////////////////
+        // RoPE relative positional encoding
 
         if (st->huggingface_rope) {
             // RoPE relative positional encoding: using complex number rotation like in lm.rs
