@@ -61,7 +61,7 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
-        Tensor* logits = forward_fused(transformer, token, pos);
+        Tensor* logits = forward(transformer, token, pos);
 
         // advance the state machine
         if (pos < num_prompt_tokens - 1) {

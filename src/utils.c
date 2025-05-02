@@ -114,6 +114,7 @@ void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
         int32_t ivals[n / GS];
         for (int j = 0; j < n; j += GS) {
             int32_t ival = 0;
+            #pragma omp simd
             for (int k = 0; k < GS; k++) {
                 ival += (int32_t)x_data[j + k] * (int32_t)w_data[in + j + k];
             }
@@ -121,14 +122,17 @@ void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
         }
         // Gather the scales in a nice consecutive array for SIMD.
         float scales[n / GS];
-        for (int j = 0; j < n; j += GS) {
-            scales[j / GS] = w_scale[(in + j) / GS] * x_scale[j / GS];
-        }
+        #pragma omp simd
+        for (int j = 0; j < n / GS; j++) {
+            scales[j] = w_scale[in / GS + j] * x_scale[j];
+        }        
         float fvals[n / GS];
+        #pragma omp simd
         for (int j = 0; j < n / GS; j++) {
             fvals[j] = ((float) ivals[j]);
         }
         float sum = 0.0f;
+        #pragma omp simd
         for (int j = 0; j < n / GS; j++) {
             sum += fvals[j] * scales[j];
         }        
