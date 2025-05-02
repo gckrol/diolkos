@@ -14,7 +14,7 @@
 #include "tensor.h"
 #include "utils.h"
 
-Tensor *load_tensor(JSON_Object *o, void * data, const char *name, size_t expected_size, quantization_type target_type) {
+Tensor *load_tensor(JSON_Object *o, const char *model_name, void * data, const char *name, size_t expected_size, quantization_type target_type) {
     Tensor *tensor = calloc(1, sizeof(Tensor));
 
     JSON_Object *tensor_obj = json_object_get_object(o, name);
@@ -45,6 +45,33 @@ Tensor *load_tensor(JSON_Object *o, void * data, const char *name, size_t expect
         exit(EXIT_FAILURE);
     }
     tensor->dim = size;
+
+    // Generate cache file name
+    char cache_name[512];
+    snprintf(cache_name, sizeof(cache_name), "cache/%s/%s-%s.tensor", model_name, name, quantization_type_to_string(target_type));
+    // Check if the cache file exists
+    struct stat st;
+    if (stat(cache_name, &st) == 0) {
+        // MMap the cache file
+        int fd = open(cache_name, O_RDONLY);
+        if (fd == -1) {
+            fprintf(stderr, "Failed to open cache file: %s\n", cache_name);
+            exit(EXIT_FAILURE);
+        }
+        void *cache_data = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (cache_data == MAP_FAILED) {
+            fprintf(stderr, "Failed to mmap cache file: %s\n", cache_name);
+            close(fd);
+            exit(EXIT_FAILURE);
+        }
+        tensor->type = target_type;
+        tensor->data = (TensorData*)cache_data;
+        if (target_type == Q8_0) {
+            tensor->scale = (float*)((uint8_t*)cache_data + tensor->dim);
+        }
+        return tensor;
+    }
+
     JSON_Array *data_offsets = json_object_get_array(tensor_obj, "data_offsets");
     size_t start = json_array_get_number(data_offsets, 0);
     size_t end = json_array_get_number(data_offsets, 1);
@@ -61,17 +88,34 @@ Tensor *load_tensor(JSON_Object *o, void * data, const char *name, size_t expect
         fprintf(stderr, "Unsupported conversion of tensor %s:  %d -> %d\n", name, tensor->type, target_type);
         exit(EXIT_FAILURE);
     }
+
+    // Write cache file
+    // Create cache directory if it doesn't exist
+    char cache_dir[512];
+    snprintf(cache_dir, sizeof(cache_dir), "cache/%s", model_name);
+    mkdir(cache_dir, 0755);
+    FILE *cache_file = fopen(cache_name, "wb");
+    if (cache_file == NULL) {
+        fprintf(stderr, "Failed to open cache file for writing: %s\n", cache_name);
+        exit(EXIT_FAILURE);
+    }
+    fwrite(result->data, quant_size(target_type), result->dim, cache_file);
+    if (result->scale) {
+        fwrite(result->scale, sizeof(float), result->dim / 32, cache_file);
+    }
+    fclose(cache_file);
+
     return result;
 }
 
 // Process a single safetensors file and load its tensors
-int process_safetensors_file(const char* filepath, Model *st, Config *config) {
+int process_safetensors_file(const char* model_name, const char* filepath, Model *st, Config *config) {
     int tensors_found = 0;
     Layer *layers = st->layers;
     int head_size = config->dim / config->n_heads;
     
     printf("Processing safetensors file: %s\n", filepath);
-    
+
     // Open the file
     int fd = open(filepath, O_RDONLY);
     if (fd == -1) {
@@ -117,21 +161,21 @@ int process_safetensors_file(const char* filepath, Model *st, Config *config) {
         // Check for token embedding
         // TODO: llama.cpp quantizes this to 8b.
         if (strcmp(tensor_name, "model.embed_tokens.weight") == 0 && st->token_embedding_table == NULL) {
-            st->token_embedding_table = load_tensor(header, tensors, tensor_name, config->vocab_size * config->dim, Q8_0);
+            st->token_embedding_table = load_tensor(header, model_name, tensors, tensor_name, config->vocab_size * config->dim, Q8_0);
             tensors_found++;
             continue;
         }
         
         // Check for final norm
         if (strcmp(tensor_name, "model.norm.weight") == 0 && st->rms_final_weight == NULL) {
-            st->rms_final_weight = load_tensor(header, tensors, tensor_name, config->dim, F32);
+            st->rms_final_weight = load_tensor(header, model_name, tensors, tensor_name, config->dim, F32);
             tensors_found++;
             continue;
         }
         
         // Check for classifier
         if (strcmp(tensor_name, "lm_head.weight") == 0 && st->wcls == NULL) {
-            st->wcls = load_tensor(header, tensors, tensor_name, config->vocab_size * config->dim, Q8_0);
+            st->wcls = load_tensor(header, model_name, tensors, tensor_name, config->vocab_size * config->dim, Q8_0);
             tensors_found++;
             continue;
         }
@@ -148,63 +192,63 @@ int process_safetensors_file(const char* filepath, Model *st, Config *config) {
                     
                     // Input layernorm
                     if (strcmp(component, "input_layernorm.weight") == 0 && layers[layer_idx].rms_att_weight == NULL) {
-                        layers[layer_idx].rms_att_weight = load_tensor(header, tensors, tensor_name, config->dim, F32);
+                        layers[layer_idx].rms_att_weight = load_tensor(header, model_name, tensors, tensor_name, config->dim, F32);
                         tensors_found++;
                         continue;
                     }
                     
                     // Q projection
                     if (strcmp(component, "self_attn.q_proj.weight") == 0 && layers[layer_idx].wq == NULL) {
-                        layers[layer_idx].wq = load_tensor(header, tensors, tensor_name, config->dim * config->dim, Q8_0);
+                        layers[layer_idx].wq = load_tensor(header, model_name, tensors, tensor_name, config->dim * config->dim, Q8_0);
                         tensors_found++;
                         continue;
                     }
                     
                     // K projection
                     if (strcmp(component, "self_attn.k_proj.weight") == 0 && layers[layer_idx].wk == NULL) {
-                        layers[layer_idx].wk = load_tensor(header, tensors, tensor_name, config->dim * config->n_kv_heads * head_size, Q8_0);
+                        layers[layer_idx].wk = load_tensor(header, model_name, tensors, tensor_name, config->dim * config->n_kv_heads * head_size, Q8_0);
                         tensors_found++;
                         continue;
                     }
                     
                     // V projection
                     if (strcmp(component, "self_attn.v_proj.weight") == 0 && layers[layer_idx].wv == NULL) {
-                        layers[layer_idx].wv = load_tensor(header, tensors, tensor_name, config->dim * config->n_kv_heads * head_size, Q8_0);
+                        layers[layer_idx].wv = load_tensor(header, model_name, tensors, tensor_name, config->dim * config->n_kv_heads * head_size, Q8_0);
                         tensors_found++;
                         continue;
                     }
                     
                     // O projection
                     if (strcmp(component, "self_attn.o_proj.weight") == 0 && layers[layer_idx].wo == NULL) {
-                        layers[layer_idx].wo = load_tensor(header, tensors, tensor_name, config->dim * config->dim, Q8_0);
+                        layers[layer_idx].wo = load_tensor(header, model_name, tensors, tensor_name, config->dim * config->dim, Q8_0);
                         tensors_found++;
                         continue;
                     }
                     
                     // Post attention layernorm
                     if (strcmp(component, "post_attention_layernorm.weight") == 0 && layers[layer_idx].rms_ffn_weight == NULL) {
-                        layers[layer_idx].rms_ffn_weight = load_tensor(header, tensors, tensor_name, config->dim, F32);
+                        layers[layer_idx].rms_ffn_weight = load_tensor(header, model_name, tensors, tensor_name, config->dim, F32);
                         tensors_found++;
                         continue;
                     }
                     
                     // MLP gate projection
                     if (strcmp(component, "mlp.gate_proj.weight") == 0 && layers[layer_idx].w1 == NULL) {
-                        layers[layer_idx].w1 = load_tensor(header, tensors, tensor_name, config->dim * config->hidden_dim, Q8_0);
+                        layers[layer_idx].w1 = load_tensor(header, model_name, tensors, tensor_name, config->dim * config->hidden_dim, Q8_0);
                         tensors_found++;
                         continue;
                     }
                     
                     // MLP down projection
                     if (strcmp(component, "mlp.down_proj.weight") == 0 && layers[layer_idx].w2 == NULL) {
-                        layers[layer_idx].w2 = load_tensor(header, tensors, tensor_name, config->dim * config->hidden_dim, Q8_0);
+                        layers[layer_idx].w2 = load_tensor(header, model_name, tensors, tensor_name, config->dim * config->hidden_dim, Q8_0);
                         tensors_found++;
                         continue;
                     }
                     
                     // MLP up projection
                     if (strcmp(component, "mlp.up_proj.weight") == 0 && layers[layer_idx].w3 == NULL) {
-                        layers[layer_idx].w3 = load_tensor(header, tensors, tensor_name, config->dim * config->hidden_dim, Q8_0);
+                        layers[layer_idx].w3 = load_tensor(header, model_name, tensors, tensor_name, config->dim * config->hidden_dim, Q8_0);
                         tensors_found++;
                         continue;
                     }
@@ -221,6 +265,15 @@ int process_safetensors_file(const char* filepath, Model *st, Config *config) {
 }
 
 Model *load_safetensors(const char* dir) {
+
+    // Extract model name from the directory
+    const char *model_name = strrchr(dir, '/');
+    if (model_name == NULL) {
+        model_name = dir;
+    } else {
+        model_name++;
+    }
+
     ///////////////////////////////
     // Load the config.json file
     char config_path[1024];
@@ -282,7 +335,7 @@ Model *load_safetensors(const char* dir) {
         snprintf(path, sizeof(path), "%s/%s", dir, entry->d_name);
         
         // Process this safetensors file and count found tensors
-        tensors_loaded += process_safetensors_file(path, st, config);
+        tensors_loaded += process_safetensors_file(model_name, path, st, config);
     }
     
     closedir(d);

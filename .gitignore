@@ -6,6 +6,7 @@
 *.bin
 *.model
 /models
+/cache
 
 # Profiling
 perf.data
