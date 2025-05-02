@@ -132,12 +132,9 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
             // Gather the scales in a nice consecutive array for SIMD.
             float scales[dim / GS];
             #pragma omp simd
-            for (int j = 0; j < dim; j += GS) {
-                scales[j / GS] = wq_scale[(in + j) / GS] * xb_q_scale[j / GS];
+            for (int j = 0; j < dim / GS; j++) {
+                scales[j] = wq_scale[in / GS + j] * xb_q_scale[j];
             }
-            // for (int j = 0; j < dim / GS; j++) {
-            //     scales[j] = wq_scale[(in + j * GS) / GS] * xb_q_scale[j];
-            // }
             float fvals[dim / GS];
             #pragma omp simd
             for (int j = 0; j < dim / GS; j++) {
