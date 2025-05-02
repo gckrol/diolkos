@@ -354,8 +354,9 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         float *hb2_data = data_f32(s->hb2);
 
         // SwiGLU non-linearity
+        #pragma omp simd
         for (int i = 0; i < hidden_dim; i++) {
-            float val = data_f32(s->hb)[i];
+            float val = hb_data[i];
             // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
             val *= (1.0f / (1.0f + expf(-val)));
             // elementwise multiply with w3(x)
@@ -367,6 +368,7 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         matmul(s->xb, s->hb, layer->w2, hidden_dim, dim);
 
         // residual connection
+        #pragma omp simd
         for (int i = 0; i < dim; i++) {
             x_data[i] += xb_data[i];
         }
