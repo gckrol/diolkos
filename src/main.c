@@ -20,7 +20,7 @@
 #include "transformer.h"
 #include "tokenizer.h"
 #include "sampler.h"
-#include "transfomer_info.h"
+#include "transformer_info.h"
 #include "transformer_fused.h"
 
 // ----------------------------------------------------------------------------
@@ -40,7 +40,7 @@ long time_in_ms(void) {
 // ----------------------------------------------------------------------------
 // generation loop
 
-void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, const char *prompt, int steps) {
+float generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, const char *prompt, int steps) {
     const char *empty_prompt = "";
     if (prompt == NULL) { prompt = empty_prompt; }
 
@@ -87,13 +87,16 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     }
     printf("\n");
 
+    float tokens_per_second = 0.0f;
     // report achieved tok/s (pos-1 because the timer starts after first iteration)
     if (pos > 1) {
         long end = time_in_ms();
-        fprintf(stderr, "achieved tok/s: %f\n", (pos-1) / (double)(end-start)*1000);
+        tokens_per_second = (float)(pos - 1) * 1000.0f / (end - start);
+        fprintf(stderr, "achieved tok/s: %.2f\n", tokens_per_second);
     }
 
     free(prompt_tokens);
+    return tokens_per_second;
 }
 
 void read_stdin(const char* guide, char* buffer, size_t bufsize) {
@@ -285,11 +288,12 @@ int main(int argc, char *argv[]) {
     long end_time = time_in_ms();
     fprintf(stderr, "Initialization took %ld ms\n", (end_time - start_time));
 
-    print_transformer_memory(&transformer);
+    size_t total_params = print_transformer_info(&transformer);
 
     // run!
     if (strcmp(mode, "generate") == 0) {
-        generate(&transformer, &tokenizer, &sampler, prompt, steps);
+        float tokens_per_second = generate(&transformer, &tokenizer, &sampler, prompt, steps);
+        fprintf(stderr, "TOPS: %.3f\n", (double)tokens_per_second*total_params / 1000000000000.0);
     } else if (strcmp(mode, "chat") == 0) {
         chat(&transformer, &tokenizer, &sampler, prompt, system_prompt, steps);
     } else {

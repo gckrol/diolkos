@@ -21,7 +21,7 @@ int get_bit_depth(quantization_type qt) {
     }
 }
 
-void print_transformer_memory(Transformer* transformer) {
+size_t print_transformer_info(Transformer* transformer) {
     Config* p = &transformer->config;
     Model* st = transformer->safetensors;
 
@@ -188,4 +188,5 @@ void print_transformer_memory(Transformer* transformer) {
             (float)runstate_memory / 1024 / 1024,
             (float)kv_memory / 1024 / 1024 / 1024,
             (float)model_memory / 1024 / 1024 / 1024);
+    return total_params;
 }

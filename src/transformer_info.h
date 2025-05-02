@@ -1,8 +1,10 @@
 #ifndef TRANSFORMER_INFO_H
 #define TRANSFORMER_INFO_H
 
+#include <stddef.h>
+
 typedef struct Transformer Transformer;
 
-void print_transformer_memory(Transformer* transformer);
+size_t print_transformer_info(Transformer* transformer);
 
 #endif
