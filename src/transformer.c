@@ -149,6 +149,9 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
         convert_f32_bf16_slice_into_offset(s->value_cache, s->v, 0, kv_dim, loff + pos * kv_dim);
 
         // multihead attention. iterate over all heads
+        // TODO: this is the slowest part of the forward pass, apart from all the matmuls.
+        // It would be good to run this in parallel again. We can do so by fusing the bf16->float conversion.
+        // Or maybe we'll quantize to Q8_0.
         int h;
         // #pragma omp parallel for private(h) // Disabled due to the use of s->kvtemp.
         for (h = 0; h < p->n_heads; h++) {
@@ -164,12 +167,15 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
 
                 // calculate the attention score as the dot product of q and k
                 float score = 0.0f;
+                #pragma omp simd
                 for (int i = 0; i < head_size; i++) {
                     score += q[i] * k[i];
                 }
-                score /= sqrtf(head_size);
-                // save the score to the attention buffer
                 att[t] = score;
+            }
+            #pragma omp simd
+            for (int t = 0; t <= pos; t++) {
+                att[t] /= sqrtf(head_size);
             }
 
             // softmax the scores to get attention weights, from 0..pos inclusively
@@ -186,6 +192,7 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
                 // get the attention weight for this timestep
                 float a = att[t];
                 // accumulate the weighted value into xb
+                #pragma omp simd
                 for (int i = 0; i < head_size; i++) {
                     xb[i] += a * v[i];
                 }
@@ -209,13 +216,16 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
         matmul(s->hb2, s->xb, layer->w3, dim, hidden_dim);
 
         // SwiGLU non-linearity
+        float *hb_data = data_f32(s->hb);
+        float *hb2_data = data_f32(s->hb2);
+        #pragma omp simd
         for (int i = 0; i < hidden_dim; i++) {
-            float val = data_f32(s->hb)[i];
+            float val = hb_data[i];
             // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
             val *= (1.0f / (1.0f + expf(-val)));
             // elementwise multiply with w3(x)
-            val *= data_f32(s->hb2)[i];
-            data_f32(s->hb)[i] = val;
+            val *= hb2_data[i];
+            hb_data[i] = val;
         }
 
         // final matmul to get the output of the ffn
