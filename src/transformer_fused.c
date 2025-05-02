@@ -33,6 +33,9 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
     int head_size = dim / p->n_heads;
     int attention_dim = p->n_heads * head_size;
 
+    const int GS = 32;
+    const float Q_MAXF = 127.0f;    
+
     if (!temp_q8) {
         // TODO not the cleanest way to allocate, should be in runstate.
         temp_q8 = Tensor_create(max(dim, hidden_dim), Q8_0);
@@ -50,21 +53,21 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         // attention rmsnorm
         // rmsnorm(s->xb, x, layer->rms_att_weight, dim);
 
-        float *restrict o_data = data_f32(s->xb);
-        float *restrict xb_data = data_f32(x);
+        float *restrict xb_data = data_f32(s->xb);
+        float *restrict x_data = data_f32(x);
         float *restrict weight_data = data_f32(layer->rms_att_weight);
     
         // calculate sum of squares
         float ss = 0.0f;
         for (int j = 0; j < dim; j++) {
-            ss += xb_data[j] * xb_data[j];
+            ss += x_data[j] * x_data[j];
         }
         ss /= dim;
         ss += 1e-5f;
         ss = 1.0f / sqrtf(ss);
         // normalize and scale
         for (int j = 0; j < dim; j++) {
-            o_data[j] = weight_data[j] * (ss * xb_data[j]);
+            xb_data[j] = weight_data[j] * (ss * x_data[j]);
         }        
 
         //////////////////////////////////
@@ -74,18 +77,40 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
 
         // F32, F32, Q8_0
+
+        // Quantize xb into temp_q8 so we can do a q8 matrix multiplication.
+        // convert_into(temp_q8, s->xb);
+        // void convert_f32_q8_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t dst_offset);
+    
+        int8_t *output_data = data_i8(temp_q8);
+    
+        size_t it;
+        #pragma omp parallel for private(it)
+        for (it = 0; it < s->xb->dim; it += GS) {
+            float max_val = 0.0f;
+            #pragma omp simd
+            for (int j = 0; j < GS; j++) {
+                max_val = fmaxf(max_val, fabsf(xb_data[it + j]));
+            }        
+            max_val /= Q_MAXF;
+            temp_q8->scale[it / GS] = max_val;
+    
+            #pragma omp simd
+            for (int j = 0; j < GS; j++) {
+                output_data[it + j] = (int8_t) roundf(xb_data[it + j] / max_val);
+            }
+        }
+
+        ////
+
         // matmul(s->q, s->xb, layer->wq, dim, attention_dim);
         // void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d)
-
-        convert_into(temp_q8, s->xb);
 
         float *restrict q_data = data_f32(s->q);
         int8_t *restrict xb_q_data = data_i8(temp_q8);
         float *restrict xb_q_scale = temp_q8->scale;
         int8_t *restrict wq_data = data_i8(layer->wq);
         float *restrict wq_scale = layer->wq->scale;
-    
-        const int GS = 32;
     
         int i;
         #pragma omp parallel for private(i)
@@ -98,6 +123,7 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
             int32_t ivals[dim / GS];
             for (int j = 0; j < dim; j += GS) {
                 int32_t ival = 0;
+                #pragma omp simd
                 for (int k = 0; k < GS; k++) {
                     ival += (int32_t)xb_q_data[j + k] * (int32_t)wq_data[in + j + k];
                 }
@@ -105,14 +131,20 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
             }
             // Gather the scales in a nice consecutive array for SIMD.
             float scales[dim / GS];
+            #pragma omp simd
             for (int j = 0; j < dim; j += GS) {
                 scales[j / GS] = wq_scale[(in + j) / GS] * xb_q_scale[j / GS];
             }
+            // for (int j = 0; j < dim / GS; j++) {
+            //     scales[j] = wq_scale[(in + j * GS) / GS] * xb_q_scale[j];
+            // }
             float fvals[dim / GS];
+            #pragma omp simd
             for (int j = 0; j < dim / GS; j++) {
                 fvals[j] = ((float) ivals[j]);
             }
             float sum = 0.0f;
+            #pragma omp simd
             for (int j = 0; j < dim / GS; j++) {
                 sum += fvals[j] * scales[j];
             }        
