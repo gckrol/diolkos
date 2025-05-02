@@ -375,9 +375,6 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
         for (i = 0; i < dim; i++) {
             int in = i * hidden_dim;
     
-            // Implemented as a bunch of small groups, so the compiler will
-            // have an easier time vectorizing them.
-    
             int32_t ivals_q[hidden_dim / GS];
             for (int j = 0; j < hidden_dim; j += GS) {
                 int32_t ival_q = 0;
@@ -403,16 +400,8 @@ Tensor* forward_fused(Transformer* transformer, int token, int pos) {
             for (int j = 0; j < hidden_dim / GS; j++) {
                 sum_q += fvals_q[j] * scales_q[j];
             }        
-            xb_data[i] = sum_q;
+            x_data[i] += sum_q;
         }        
-
-        ////
-
-        // residual connection
-        #pragma omp simd
-        for (int i = 0; i < dim; i++) {
-            x_data[i] += xb_data[i];
-        }
     }
 
     // final rmsnorm
