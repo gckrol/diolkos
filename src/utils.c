@@ -95,11 +95,11 @@ void init_utils(int dim, int hidden_dim) {
 void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
     convert_into(temp_q8, xt);
 
-    float * xout_data = data_f32(xoutt);
-    int8_t * x_data = data_i8(temp_q8);
-    float * x_scale = temp_q8->scale;
-    int8_t * w_data = data_i8(wt);
-    float * w_scale = wt->scale;
+    float * xout_data = __builtin_assume_aligned(data_f32(xoutt), 32);
+    int8_t * x_data = __builtin_assume_aligned(data_i8(temp_q8), 32);
+    float * x_scale = __builtin_assume_aligned(temp_q8->scale, 32);
+    int8_t * w_data = __builtin_assume_aligned(data_i8(wt), 32);
+    float * w_scale = __builtin_assume_aligned(wt->scale, 32);
 
     const int GS = 32;
 
@@ -108,36 +108,18 @@ void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
     for (i = 0; i < d; i++) {
         int in = i * n;
 
-        // Implemented as a bunch of small groups, so the compiler will
-        // have an easier time vectorizing them.
-
-        int32_t ivals[n / GS];
-        for (int j = 0; j < n; j += GS) {
-            int8_t *x_start = __builtin_assume_aligned(x_data + j, 32);
-            int8_t *w_start = __builtin_assume_aligned(w_data + in + j, 32);
+        float sum = 0.0f;
+        for (int j = 0; j < n / GS; j++) {
+            int8_t *x_start = __builtin_assume_aligned(x_data + j * GS, 32);
+            int8_t *w_start = __builtin_assume_aligned(w_data + in + j * GS, 32);
 
             int32_t ival = 0;
             #pragma omp simd
             for (int k = 0; k < GS; k++) {
                 ival += (int32_t)x_start[k] * (int32_t)w_start[k];
             }
-            ivals[j / GS] = ival;
-        }
-        // Gather the scales in a nice consecutive array for SIMD.
-        float scales[n / GS];
-        #pragma omp simd
-        for (int j = 0; j < n / GS; j++) {
-            scales[j] = w_scale[in / GS + j] * x_scale[j];
-        }        
-        float fvals[n / GS];
-        #pragma omp simd
-        for (int j = 0; j < n / GS; j++) {
-            fvals[j] = ((float) ivals[j]);
-        }
-        float sum = 0.0f;
-        #pragma omp simd
-        for (int j = 0; j < n / GS; j++) {
-            sum += fvals[j] * scales[j];
+
+            sum += ((float) ival) * w_scale[in / GS + j] * x_scale[j];
         }        
         xout_data[i] = sum;
     }
