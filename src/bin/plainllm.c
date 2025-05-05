@@ -292,7 +292,7 @@ int main(int argc, char *argv[]) {
     // run!
     if (strcmp(mode, "generate") == 0) {
         float tokens_per_second = generate(&transformer, &tokenizer, &sampler, prompt, steps);
-        fprintf(stderr, "TOPS: %.3f\n", (double)tokens_per_second*total_params / 1000000000000.0);
+        fprintf(stderr, "GMAC: %.1f\n", (double)tokens_per_second*total_params / 1000000000.0);
     } else if (strcmp(mode, "chat") == 0) {
         chat(&transformer, &tokenizer, &sampler, prompt, system_prompt, steps);
     } else {
