@@ -21,7 +21,6 @@
 #include "tokenizer.h"
 #include "sampler.h"
 #include "transformer_info.h"
-#include "transformer_fused.h"
 
 // ----------------------------------------------------------------------------
 // utilities: time

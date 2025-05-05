@@ -21,15 +21,12 @@ void malloc_run_state(RunState* s, Config* p) {
     s->att = Tensor_create(p->n_heads * p->seq_len, F32);
     s->logits = Tensor_create(p->vocab_size, F32);
 
-    // Using BF16 for these saves memory, but is slower.
+    // Using BF16 for these saves memory, and the speed is the same.
     s->key_cache = Tensor_create(p->n_layers * p->seq_len * kv_dim, BF16);
     s->value_cache = Tensor_create(p->n_layers * p->seq_len * kv_dim, BF16);
 
     s->k = Tensor_create(kv_dim, F32);
     s->v = Tensor_create(kv_dim, F32);
-
-    int head_size = p->dim / p->n_heads;
-    s->kvtemp = Tensor_create(head_size, F32);
 }
 
 void build_transformer_from_safetensors(Transformer *t, const char* model_path) {
@@ -149,12 +146,8 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
         convert_f32_bf16_slice_into_offset(s->value_cache, s->v, 0, kv_dim, loff + pos * kv_dim);
 
         // multihead attention. iterate over all heads
-        // TODO: this is the slowest part of the forward pass, apart from all the matmuls.
-        // It would be good to run this in parallel again. We can do so by fusing the bf16->float conversion.
-        // Or maybe we'll quantize to Q8_0.
-        int h;
-        // #pragma omp parallel for private(h) // Disabled due to the use of s->kvtemp.
-        for (h = 0; h < p->n_heads; h++) {
+        #pragma omp parallel for
+        for (int h = 0; h < p->n_heads; h++) {
             // get the query vector for this head
             float* q = data_f32(s->q) + h * head_size;
             // attention scores for this head
@@ -162,20 +155,19 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
             // iterate over all timesteps, including the current one
             for (int t = 0; t <= pos; t++) {
                 // get the key vector for this head and at this timestep
-                convert_slice_into(s->kvtemp, s->key_cache, loff + t * kv_dim + (h / kv_mul) * head_size, head_size);
-                float *k = data_f32(s->kvtemp);
+                uint16_t *data = (uint16_t*)s->key_cache->data + loff + t * kv_dim + (h / kv_mul) * head_size;
 
                 // calculate the attention score as the dot product of q and k
                 float score = 0.0f;
                 #pragma omp simd
                 for (int i = 0; i < head_size; i++) {
-                    score += q[i] * k[i];
+                    uint32_t bits = ((uint32_t)data[i]) << 16;
+                    union { uint32_t u; float f; } u = { bits };
+                    score += q[i] * u.f;
                 }
+                score /= sqrtf(head_size);
+                // save the score to the attention buffer
                 att[t] = score;
-            }
-            #pragma omp simd
-            for (int t = 0; t <= pos; t++) {
-                att[t] /= sqrtf(head_size);
             }
 
             // softmax the scores to get attention weights, from 0..pos inclusively
@@ -186,15 +178,16 @@ Tensor* forward(Transformer* transformer, int token, int pos) {
             memset(xb, 0, head_size * sizeof(float));
             for (int t = 0; t <= pos; t++) {
                 // get the value vector for this head and at this timestep
-                convert_slice_into(s->kvtemp, s->value_cache, loff + t * kv_dim + (h / kv_mul) * head_size, head_size);
-                float *v = data_f32(s->kvtemp);
+                uint16_t *data = (uint16_t*)s->value_cache->data + loff + t * kv_dim + (h / kv_mul) * head_size;
 
                 // get the attention weight for this timestep
                 float a = att[t];
                 // accumulate the weighted value into xb
                 #pragma omp simd
                 for (int i = 0; i < head_size; i++) {
-                    xb[i] += a * v[i];
+                    uint32_t bits = ((uint32_t)data[i]) << 16;
+                    union { uint32_t u; float f; } u = { bits };                    
+                    xb[i] += a * u.f;
                 }
             }
         }
