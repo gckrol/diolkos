@@ -199,7 +199,7 @@ void convert_f32_q8_slice_into_offset(Tensor *dst, Tensor *input, size_t start, 
 
         #pragma omp simd
         for (size_t j = 0; j < GS; j++) {
-            output_data[dst_offset + i + j] = (int8_t) roundf(input_data[i + j] / max_val);
+            output_data[dst_offset + i + j] = (int8_t) nearbyintf(input_data[i + j] / max_val);
         }
     }
 }
@@ -276,7 +276,7 @@ Tensor *convert_f16_q8_0(Tensor *input) {
         result->scale[i / GS] = max_val;
 
         for (size_t j = 0; j < GS; ++j) {
-            data_result[i + j] = (int8_t) roundf(floats[j] * inv_max);
+            data_result[i + j] = (int8_t) nearbyintf(floats[j] * inv_max);
         }
     }
 
@@ -310,7 +310,7 @@ Tensor *convert_bf16_q8_0(Tensor *input) {
         result->scale[i / GS] = max_val;
 
         for (size_t j = 0; j < GS; ++j) {
-            data_result[i + j] = (int8_t) roundf(floats[j] * inv_max);
+            data_result[i + j] = (int8_t) nearbyintf(floats[j] * inv_max);
         }
     }
 
