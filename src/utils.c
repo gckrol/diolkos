@@ -172,6 +172,9 @@ void matmul_Q4_0_untested(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
 }
 
 void matmul(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
+    assert(wt->dim == n * d);
+    assert(xt->dim == n);
+    assert(xoutt->dim == d);
     if (wt->type == F32) {
         matmul_f32(xoutt, xt, wt, n, d);
     } else if (wt->type == Q8_0) {

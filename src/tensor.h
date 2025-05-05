@@ -20,6 +20,8 @@ typedef struct Tensor {
     TensorData *data;
     float *scale;
     size_t dim;
+    size_t hdim; // Input dimension.
+    size_t vdim; // Output dimension.
 } Tensor;
 
 float bf16_to_float(uint16_t bf16);
@@ -27,6 +29,7 @@ float f16_to_float(uint16_t f16);
 
 Tensor *Tensor_create(size_t size, quantization_type type);
 void Tensor_destroy(Tensor *tensor);
+size_t Tensor_storage_size(Tensor *tensor);
 
 Tensor *convert(Tensor *input, quantization_type type);
 void convert_into(Tensor *dst, Tensor *input);

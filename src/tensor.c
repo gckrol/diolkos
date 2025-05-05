@@ -77,16 +77,27 @@ Tensor *Tensor_create(size_t size, quantization_type type) {
     Tensor *tensor = calloc(1, sizeof(Tensor));
     tensor->type = type;
     tensor->dim = size;
-    tensor->data = aligned_alloc(32, size * quant_size(type));
+    size_t alloc_size = Tensor_storage_size(tensor);
+    // Single buffer.
+    tensor->data = aligned_alloc(32, alloc_size);
     if (type == Q8_0) {
-        tensor->scale = aligned_alloc(32, size / 32 * sizeof(float));
+        // Scale is stored after the data.
+        tensor->scale = (uint8_t*)tensor->data + size;
     }
     return tensor;
 }
 
+size_t Tensor_storage_size(Tensor *tensor) {
+    size_t size = tensor->dim * quant_size(tensor->type);
+    if (tensor->type == Q8_0) {
+        size += tensor->dim / 32 * sizeof(float);
+    }
+    return size;
+}
+
 void Tensor_destroy(Tensor *tensor) {
+    if (tensor == NULL) return;
     free(tensor->data);
-    free(tensor->scale);
     free(tensor);
 }
 

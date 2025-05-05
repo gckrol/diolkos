@@ -8,29 +8,26 @@ CC = clang $(WARN) -Wno-gnu-folding-constant -Rpass=loop-vectorize -Rpass-missed
 
 
 # Source files and object files
-SRC = src/tokenizer.c src/sampler.c src/transformer.c src/utils.c src/safetensors.c src/parson.c src/tensor.c src/transformer_info.c
+SRC = src/tokenizer.c src/sampler.c src/transformer.c src/utils.c src/safetensors.c src/parson.c src/tensor.c src/transformer_info.c src/net.c
 OBJ = $(patsubst src/%.c,obj/%.o,$(SRC))
 OPT = -Ofast -march=native -flto -fopenmp #-fopenmp-simd # -fopt-info-vec-missed # -fopenmp # -fopt-info-vec-missed
+INC = -Isrc
 
 .PHONY: all
-all: bin/plainllm bin/stest
+all: bin/plainllm bin/stest bin/worker bin/client
 
-bin/plainllm: obj/bin/plainllm.o $(OBJ)
+bin/%: obj/bin/%.o $(OBJ)
 	@mkdir -p bin
-	$(CC) $(OPT) -Isrc -g -o $@ $^ -lm
-
-bin/stest: obj/bin/stest.o $(OBJ)
-	@mkdir -p bin
-	$(CC) $(OPT) -Isrc -g -o $@ $^ -lm
+	$(CC) $(OPT) $(INC) -g -o $@ $^ -lm
 
 obj/%.o: src/%.c
 	@mkdir -p obj
-	$(CC) $(OPT) -Isrc -g -c -o $@ $<
+	$(CC) $(OPT) $(INC) -g -c -o $@ $<
 
 obj/bin/%.o: src/bin/%.c
 	@mkdir -p obj
 	@mkdir -p obj/bin
-	$(CC) $(OPT) -Isrc -g -c -o $@ $<
+	$(CC) $(OPT) $(INC) -g -c -o $@ $<
 
 # Useful for testing - build + run with the small stories model.
 .PHONY: run
