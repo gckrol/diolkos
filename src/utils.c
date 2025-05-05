@@ -114,11 +114,12 @@ void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
             int8_t *w_start = __builtin_assume_aligned(w_data + in + j * GS, 32);
 
             int32_t ival = 0;
-            #pragma omp simd
+            #pragma omp simd simdlen(16)
             for (int k = 0; k < GS; k++) {
                 ival += (int32_t)x_start[k] * (int32_t)w_start[k];
             }
-
+            // It's faster to do this right away, in this loop.
+            // This might be because we can do the multiplication while waiting for memory.
             sum += ((float) ival) * w_scale[in / GS + j] * x_scale[j];
         }        
         xout_data[i] = sum;
