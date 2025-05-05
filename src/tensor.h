@@ -9,6 +9,7 @@ typedef enum quantization_type {
     F16,
     BF16,
     Q8_0, // Group size 32.
+    Q4_0, // Group size 32.
 } quantization_type;
 
 /// Special pointer type so we don't get any autocasts.
