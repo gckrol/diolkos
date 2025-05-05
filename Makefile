@@ -15,17 +15,22 @@ OPT = -Ofast -march=native -flto -fopenmp #-fopenmp-simd # -fopt-info-vec-missed
 .PHONY: all
 all: bin/plainllm bin/stest
 
-bin/plainllm: obj/main.o $(OBJ)
+bin/plainllm: obj/bin/plainllm.o $(OBJ)
 	@mkdir -p bin
-	$(CC) $(OPT) -g -o $@ $^ -lm
+	$(CC) $(OPT) -Isrc -g -o $@ $^ -lm
 
-bin/stest: obj/stest.o $(OBJ)
+bin/stest: obj/bin/stest.o $(OBJ)
 	@mkdir -p bin
-	$(CC) $(OPT) -g -o $@ $^ -lm
+	$(CC) $(OPT) -Isrc -g -o $@ $^ -lm
 
 obj/%.o: src/%.c
 	@mkdir -p obj
-	$(CC) $(OPT) -g -c -o $@ $<
+	$(CC) $(OPT) -Isrc -g -c -o $@ $<
+
+obj/bin/%.o: src/bin/%.c
+	@mkdir -p obj
+	@mkdir -p obj/bin
+	$(CC) $(OPT) -Isrc -g -c -o $@ $<
 
 # Useful for testing - build + run with the small stories model.
 .PHONY: run
