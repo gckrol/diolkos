@@ -1,9 +1,12 @@
 #ifndef UTILS_H
 #define UTILS_H
 
+#include <stdbool.h>
+
 typedef struct Tensor Tensor;
 
 // Common mathematical functions used across different components
+bool reliable_isnan(double x);
 void softmax(Tensor* x, int size);
 void softmax_f32(float* x, int size);
 void rmsnorm(Tensor* o, Tensor* x, Tensor* weight, int size);

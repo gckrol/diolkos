@@ -1,8 +1,17 @@
 #include "utils.h"
 #include <math.h>
+#include <stdbool.h>
 #include <string.h>
 #include <assert.h>
 #include "tensor.h"
+
+bool reliable_isnan(double x) {
+    uint64_t bits;
+    memcpy(&bits, &x, sizeof(bits));
+    uint64_t exponent = (bits >> 52) & 0x7FF;
+    uint64_t mantissa = bits & ((1ULL << 52) - 1);
+    return (exponent == 0x7FF) && (mantissa != 0);
+}
 
 void softmax(Tensor* xt, int size) {
     float *x = data_f32(xt);
@@ -92,24 +101,24 @@ void init_utils(int dim, int hidden_dim) {
     temp_q8 = Tensor_create(max(dim, hidden_dim), Q8_0);
 }
 
-void matmul_Q8_0(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
-    convert_into(temp_q8, xt);
+void matmul_Q8_0(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix, int in_dim, int out_dim) {
+    convert_into(temp_q8, in_tensor);
 
-    float * xout_data = __builtin_assume_aligned(data_f32(xoutt), 32);
+    float * xout_data = __builtin_assume_aligned(data_f32(out_tensor), 32);
     int8_t * x_data = __builtin_assume_aligned(data_i8(temp_q8), 32);
     float * x_scale = __builtin_assume_aligned(temp_q8->scale, 32);
-    int8_t * w_data = __builtin_assume_aligned(data_i8(wt), 32);
-    float * w_scale = __builtin_assume_aligned(wt->scale, 32);
+    int8_t * w_data = __builtin_assume_aligned(data_i8(matrix), 32);
+    float * w_scale = __builtin_assume_aligned(matrix->scale, 32);
 
     const int GS = 32;
 
     int i;
     #pragma omp parallel for private(i)
-    for (i = 0; i < d; i++) {
-        int in = i * n;
+    for (i = 0; i < out_dim; i++) {
+        int in = i * in_dim;
 
         float sum = 0.0f;
-        for (int j = 0; j < n / GS; j++) {
+        for (int j = 0; j < in_dim / GS; j++) {
             int8_t *x_start = __builtin_assume_aligned(x_data + j * GS, 32);
             int8_t *w_start = __builtin_assume_aligned(w_data + in + j * GS, 32);
 
@@ -172,9 +181,9 @@ void matmul_Q4_0_untested(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
 }
 
 void matmul(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
-    assert(wt->dim == n * d);
-    assert(xt->dim == n);
-    assert(xoutt->dim == d);
+    assert(wt->dim >= n * d);
+    assert(xt->dim >= n);
+    assert(xoutt->dim >= d);
     if (wt->type == F32) {
         matmul_f32(xoutt, xt, wt, n, d);
     } else if (wt->type == Q8_0) {

@@ -41,9 +41,9 @@ Tensor *load_tensor(JSON_Object *o, const char *model_name, void * data, const c
         size_t d = json_array_get_number(shape, i);
         size *= d;
         if (i == 0) {
-            tensor->hdim = d;
-        } else if (i == 1) {
             tensor->vdim = d;
+        } else if (i == 1) {
+            tensor->hdim = d;
         }
     }
     if (size != expected_size) {

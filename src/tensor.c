@@ -402,6 +402,7 @@ void convert_slice_into(Tensor *dst, Tensor *input, size_t start, size_t length)
         convert_bf16_f32_slice_into_offset(dst, input, start, length, 0);
         return;
     }
+    printf("convert_slice_into: %d -> %d\n", input->type, dst->type);
     assert(!"unknown conversion for convert_slice_into");
     __builtin_unreachable();
 }

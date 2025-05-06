@@ -22,6 +22,8 @@ typedef struct Tensor {
     size_t dim;
     size_t hdim; // Input dimension.
     size_t vdim; // Output dimension.
+
+    uint32_t tensor_id; // Used to identify it on workers.
 } Tensor;
 
 float bf16_to_float(uint16_t bf16);

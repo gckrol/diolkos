@@ -10,6 +10,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <time.h>
 
 #include "transformer.h"
 #include "tokenizer.h"
@@ -17,10 +18,16 @@
 #include "transformer_info.h"
 #include <sys/socket.h>
 #include <arpa/inet.h>
+#include <netinet/tcp.h>
 #include "safetensors.h"
 #include "worker_commands.h"
 #include <assert.h>
 #include "net.h"
+
+// VS Code shows this as undefined.
+#ifndef CLOCK_MONOTONIC
+#define CLOCK_MONOTONIC 0
+#endif
 
 typedef struct RemoteWorker {
     int fd;
@@ -31,6 +38,88 @@ typedef struct RemoteWorker {
 } RemoteWorker;
 
 RemoteWorker *workers = NULL;
+int num_workers = 1;
+
+static int max(int a, int b) {
+    return (a > b) ? a : b;
+}
+
+static Tensor *temp_q8 = NULL;
+static Tensor *temp_f32 = NULL;
+void init_temp(int dim, int hidden_dim) {
+    temp_q8 = Tensor_create(max(dim, hidden_dim), Q8_0);
+    temp_f32 = Tensor_create(max(dim, hidden_dim), F32);
+}
+
+static double time_in_ms2(struct timespec *start, struct timespec *end) {
+    return (end->tv_sec - start->tv_sec) * 1000.0 +
+           (end->tv_nsec - start->tv_nsec) / 1e6;
+}
+
+void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_dim) {
+    // printf("matmul_remote: in: %zu xout: %zu in_dim: %d out_dim: %d\n", xt->dim, xoutt->dim, in_dim, out_dim);
+    // printf("types in: %s xout: %s wt: %s\n", quantization_type_to_string(xt->type), quantization_type_to_string(xoutt->type), quantization_type_to_string(wt->type));
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    assert(wt->type == Q8_0);
+    assert(xt->type == F32);
+    assert(xoutt->type == F32);
+
+    // printf("matmul_remote for matrix %d\n", wt->tensor_id);
+    // printf("input dim: %zu\n", xt->dim);
+    assert(wt->tensor_id > 0);
+    convert_into(temp_q8, xt);
+
+    // Send inputs.
+    for (int w=0;w<num_workers;w++) {
+        RemoteWorker *worker = &workers[w];
+        // printf("Worker %d: %s:%d, start: %f, end %f\n", w, worker->address, worker->port, worker->start, worker->end);
+        uint16_t command = CMD_MULTIPLY;
+        write_full(worker->fd, &command, sizeof(command));
+        uint32_t slice_id = wt->tensor_id;
+        write_full(worker->fd, &slice_id, sizeof(slice_id));
+
+        size_t data_size = xt->dim;
+        // printf("Sending %zu bytes to worker %d\n", data_size + data_size / 32 * sizeof(float), w);
+        write_full(worker->fd, temp_q8->data, data_size);
+        write_full(worker->fd, temp_q8->scale, data_size / 32 * sizeof(float));
+
+        write_end_marker(worker->fd);
+    }
+    // Read outputs.
+    for (int w=0;w<num_workers;w++) {
+        RemoteWorker *worker = &workers[w];
+        // We get back a slice of a certain number of rows.
+        assert(xoutt->type == F32);
+
+        uint32_t start_offset = (uint32_t)(xoutt->dim * worker->start); // Inclusive.
+        uint32_t end_offset = (uint32_t)(xoutt->dim * worker->end); // Exclusive.
+        // printf("Worker %d: start_offset: %u, end_offset: %u\n", w, start_offset, end_offset);
+        read_full(worker->fd, (float*)xoutt->data + start_offset, (end_offset - start_offset) * sizeof(float));
+        read_end_marker(worker->fd);
+    } 
+    // printf("matmul_remote done\n");
+
+    // Verify that the output is correct.
+    // matmul(temp_f32, xt, wt, n, d);
+    // for (int i = 0; i < xoutt->dim; i++) {
+    //     float val = data_f32(temp_f32)[i];
+    //     float val2 = data_f32(xoutt)[i];
+    //     if (reliable_isnan(val) || reliable_isnan(val2)) {
+    //         printf("NaN at %d: %f != %f\n", i, val, val2);
+    //         assert(!"NaN in matmul_remote");
+    //     }
+    //     if (fabs(val - val2) > 1e-7) {
+    //         printf("Mismatch at %d: %f != %f\n", i, val, val2);
+    //         assert(!"Mismatch in matmul_remote");
+    //     }
+    //     data_f32(xoutt)[i] = val2; // Copy the correct value back to xoutt.
+    // }
+
+    clock_gettime(CLOCK_MONOTONIC, &end);
+    // printf("Function took %.3f ms\n", time_in_ms2(&start, &end));
+}
 
 // ----------------------------------------------------------------------------
 // utilities: time
@@ -45,6 +134,196 @@ long time_in_ms(void) {
     clock_gettime(CLOCK_REALTIME, &time);
     return time.tv_sec * 1000 + time.tv_nsec / 1000000;
 }
+
+Tensor* forward_remote(Transformer* transformer, int token, int pos) {
+    // a few convenience variables
+    Config* p = &transformer->config;
+    Model* st = transformer->safetensors;
+    RunState* s = &transformer->state;
+    Tensor *x = s->x;
+    int dim = p->dim;
+    int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+    int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
+    int hidden_dim = p->hidden_dim;
+    int head_size = dim / p->n_heads;
+    int attention_dim = p->n_heads * head_size;
+
+    // printf("dim: %d, kv_dim: %d, kv_mul: %d, hidden_dim: %d, head_size: %d, attention_dim: %d\n",
+    //        dim, kv_dim, kv_mul, hidden_dim, head_size, attention_dim);
+
+    // copy the token embedding into x
+    convert_slice_into(x, st->token_embedding_table, token * dim, dim);
+
+    // forward all the layers
+    for(int l = 0; l < p->n_layers; l++) {
+        // access the layer weights
+        Layer *layer = &st->layers[l];
+
+        // attention rmsnorm
+        rmsnorm(s->xb, x, layer->rms_att_weight, dim);
+
+        // key and value point to the kv cache
+        int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
+
+        // qkv matmuls for this position
+        matmul_remote(s->q, s->xb, layer->wq, dim, attention_dim);
+        matmul_remote(s->k, s->xb, layer->wk, dim, kv_dim);
+        matmul_remote(s->v, s->xb, layer->wv, dim, kv_dim);
+
+        if (st->huggingface_rope) {
+            // RoPE relative positional encoding: using complex number rotation like in lm.rs
+            for (int i = 0; i < p->n_heads; i++) {
+                for (int j = 0; j < head_size/2; j++) {
+                    int head_dim = j * 2;
+                    float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+                    float val = pos * freq;
+                    float fcr = cosf(val);
+                    float fci = sinf(val);
+                    
+                    // Calculate indices for the first and second element in each pair
+                    int q_idx1 = (i * head_size) + j;
+                    int q_idx2 = (i * head_size) + j + (head_size/2);
+                    
+                    // For query vector - apply complex number rotation
+                    float q0 = data_f32(s->q)[q_idx1];
+                    float q1 = data_f32(s->q)[q_idx2];
+                    data_f32(s->q)[q_idx1] = q0 * fcr - q1 * fci;
+                    data_f32(s->q)[q_idx2] = q0 * fci + q1 * fcr;
+                    
+                    // For key vector - check if this head's key part is within kv_dim
+                    // This is equivalent to the "rotn" logic in the Rust code
+                    if ((i*head_size) + j + (head_size/2) < kv_dim) {
+                        int k_idx1 = (i * head_size) + j;
+                        int k_idx2 = (i * head_size) + j + (head_size/2);
+                        
+                        float k0 = data_f32(s->k)[k_idx1];
+                        float k1 = data_f32(s->k)[k_idx2];
+                        data_f32(s->k)[k_idx1] = k0 * fcr - k1 * fci;
+                        data_f32(s->k)[k_idx2] = k0 * fci + k1 * fcr;
+                    }
+                }
+            }
+        } else {
+            // Normal llama.cpp, llama2.c or lm.rs rope calculation.
+            for (int i = 0; i < dim; i+=2) {
+                int head_dim = i % head_size;
+                float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
+                float val = pos * freq;
+                float fcr = cosf(val);
+                float fci = sinf(val);
+                int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
+                for (int v = 0; v < rotn; v++) {
+                    Tensor* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
+                    float v0 = data_f32(vec)[i];
+                    float v1 = data_f32(vec)[i+1];
+                    data_f32(vec)[i] = v0 * fcr - v1 * fci;
+                    data_f32(vec)[i+1] = v0 * fci + v1 * fcr;
+                }
+            }            
+        }
+
+        // copy the key and value into the kv cache (quantized)
+        // The `+ pos * kv_dim` is to write it in the next position.
+        // convert_f32_q8_slice_into_offset(s->key_cache, s->k, 0, kv_dim, loff + pos * kv_dim);
+        // convert_f32_q8_slice_into_offset(s->value_cache, s->v, 0, kv_dim, loff + pos * kv_dim);
+        // convert_f32_f32_slice_into_offset(s->key_cache, s->k, 0, kv_dim, loff + pos * kv_dim);
+        // convert_f32_f32_slice_into_offset(s->value_cache, s->v, 0, kv_dim, loff + pos * kv_dim);
+        convert_f32_bf16_slice_into_offset(s->key_cache, s->k, 0, kv_dim, loff + pos * kv_dim);
+        convert_f32_bf16_slice_into_offset(s->value_cache, s->v, 0, kv_dim, loff + pos * kv_dim);
+
+        // multihead attention. iterate over all heads
+        #pragma omp parallel for
+        for (int h = 0; h < p->n_heads; h++) {
+            // get the query vector for this head
+            float* q = data_f32(s->q) + h * head_size;
+            // attention scores for this head
+            float* att = data_f32(s->att) + h * p->seq_len;
+            // iterate over all timesteps, including the current one
+            for (int t = 0; t <= pos; t++) {
+                // get the key vector for this head and at this timestep
+                uint16_t *data = (uint16_t*)s->key_cache->data + loff + t * kv_dim + (h / kv_mul) * head_size;
+
+                // calculate the attention score as the dot product of q and k
+                float score = 0.0f;
+                #pragma omp simd
+                for (int i = 0; i < head_size; i++) {
+                    uint32_t bits = ((uint32_t)data[i]) << 16;
+                    union { uint32_t u; float f; } u = { bits };
+                    score += q[i] * u.f;
+                }
+                score /= sqrtf(head_size);
+                // save the score to the attention buffer
+                att[t] = score;
+            }
+
+            // softmax the scores to get attention weights, from 0..pos inclusively
+            softmax_f32(att, pos + 1);
+
+            // weighted sum of the values, store back into xb
+            float* xb = data_f32(s->xb) + h * head_size;
+            memset(xb, 0, head_size * sizeof(float));
+            for (int t = 0; t <= pos; t++) {
+                // get the value vector for this head and at this timestep
+                uint16_t *data = (uint16_t*)s->value_cache->data + loff + t * kv_dim + (h / kv_mul) * head_size;
+
+                // get the attention weight for this timestep
+                float a = att[t];
+                // accumulate the weighted value into xb
+                #pragma omp simd
+                for (int i = 0; i < head_size; i++) {
+                    uint32_t bits = ((uint32_t)data[i]) << 16;
+                    union { uint32_t u; float f; } u = { bits };                    
+                    xb[i] += a * u.f;
+                }
+            }
+        }
+
+        // final matmul to get the output of the attention
+        matmul_remote(s->xb2, s->xb, layer->wo, dim, dim);
+
+        // residual connection back into x
+        for (int i = 0; i < dim; i++) {
+            data_f32(x)[i] += data_f32(s->xb2)[i];
+        }
+
+        // ffn rmsnorm
+        rmsnorm(s->xb, x, layer->rms_ffn_weight, dim);
+
+        // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
+        // first calculate self.w1(x) and self.w3(x)
+        matmul_remote(s->hb, s->xb, layer->w1, dim, hidden_dim);
+        matmul_remote(s->hb2, s->xb, layer->w3, dim, hidden_dim);
+
+        // SwiGLU non-linearity
+        float *hb_data = data_f32(s->hb);
+        float *hb2_data = data_f32(s->hb2);
+        #pragma omp simd
+        for (int i = 0; i < hidden_dim; i++) {
+            float val = hb_data[i];
+            // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+            val *= (1.0f / (1.0f + expf(-val)));
+            // elementwise multiply with w3(x)
+            val *= hb2_data[i];
+            hb_data[i] = val;
+        }
+
+        // final matmul to get the output of the ffn
+        matmul_remote(s->xb, s->hb, layer->w2, hidden_dim, dim);
+
+        // residual connection
+        for (int i = 0; i < dim; i++) {
+            data_f32(x)[i] += data_f32(s->xb)[i];
+        }
+    }
+
+    // final rmsnorm
+    rmsnorm(x, x, st->rms_final_weight, dim);
+
+    // classifier into logits
+    matmul(s->logits, x, st->wcls, p->dim, p->vocab_size);
+    return s->logits;
+}
+
 
 // ----------------------------------------------------------------------------
 // generation loop
@@ -70,7 +349,7 @@ float generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
-        Tensor* logits = forward(transformer, token, pos);
+        Tensor* logits = forward_remote(transformer, token, pos);
 
         // advance the state machine
         if (pos < num_prompt_tokens - 1) {
@@ -128,7 +407,6 @@ void send_slice(RemoteWorker *worker, int slice_id, Tensor *matrix) {
     uint32_t type = matrix->type;
     uint32_t dim_in = matrix->hdim;
     uint32_t dim_out = end_offset - start_offset;
-    uint32_t end = 0xCAFEF00D;
 
     write_full(worker->fd, &command, sizeof(command));
     write_full(worker->fd, &slice_id, sizeof(slice_id));
@@ -157,7 +435,9 @@ void send_slice(RemoteWorker *worker, int slice_id, Tensor *matrix) {
     }
     printf("Sent %zu bytes for slice %d\n", bytes_sent, slice_id);
 
-    write_full(worker->fd, &end, sizeof(end));
+    write_end_marker(worker->fd);
+
+    matrix->tensor_id = slice_id;
 }
 
 void error_usage(void) {
@@ -217,9 +497,10 @@ int main(int argc, char *argv[]) {
     if (steps < 0) steps = 0;
 
     // build the Transformer via the model .bin file
-    Transformer transformer;
+    Transformer transformer = {0};
     build_transformer_from_safetensors(&transformer, checkpoint_path);
     if (steps == 0 || steps > transformer.config.seq_len) steps = transformer.config.seq_len; // override to ~max length
+    init_temp(transformer.config.dim, transformer.config.hidden_dim);
 
     // build the Tokenizer via the tokenizer .bin file
     Tokenizer tokenizer;
@@ -232,7 +513,7 @@ int main(int argc, char *argv[]) {
     // Connect to the workers and upload their matrices.
 
     // Define the workers. TODO: load from config file, or have them register.
-    const int num_workers = 1;
+    num_workers = 2;
     workers = calloc(num_workers, sizeof(RemoteWorker));
     workers[0].address = "127.0.0.1";
     workers[0].port = 1234;
@@ -264,9 +545,12 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
 
+        int flag = 1;
+        setsockopt(workers[i].fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(int));
+
         // Loop over all matrices, and send the slice to the worker.
         Model *m = transformer.safetensors;
-        int matrix_id = 0;
+        int matrix_id = 1;
         send_slice(&workers[i], matrix_id++, m->token_embedding_table);
         send_slice(&workers[i], matrix_id++, m->rms_final_weight);
         send_slice(&workers[i], matrix_id++, m->wcls);
