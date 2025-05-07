@@ -1,8 +1,8 @@
 # BoardMind
 
-What if that pile of electronics junk you have could think? Now it can! BoardMind turns all your single board computers, old laptops, washing machines (well - not yet) into a cluster that can run inference at acceptable speeds.
+What if that pile of electronics junk you have could think? Now it can! BoardMind turns your single-board computers, old laptops, washing machines (well - not yet) into a cluster that can run inference at acceptable speeds.
 
-- Are you preparing for after the apocalypse, where supply of electronics is limited and you have to use what you got?
+- Are you preparing for after the apocalypse, where supply of electronics is limited and you have to use what you've got?
 - Do you want to play around with electronics and inference, and learn how it works?
 - Do you want to reduce your dependence on the big players (Nvidia, AMD, Intel, Apple), and run inference on RISC-V or ARM?
 
@@ -12,31 +12,31 @@ BoardMind started as a fork of [llama2.c](https://github.com/karpathy/llama2.c).
 
 ## Status
 
-The code is still highly experimental, but this all works:
+The code is still highly experimental, but the following features are all working:
 
-- Loading of safetensor models (llama2 architecture).
+- Loading of safetensor models (LLaMA architecture).
 - Automatic quantization to Q8_0.
 - Efficient caching/loading of quantized models.
-- 8 bit inference at 90% of the speed of Llama.cpp.
+- 8-bit inference at 90% of the speed of Llama.cpp.
 - Clustered operation at 90% efficiency.
 
 Supported model types:
-- Llama 2
+- LLaMA 2
 
 Supported model formats:
-- Non quantized (F16/BF16/BF32) safetensor. These are the most common models on HuggingFace.
+- Non-quantized (F16/BF16/BF32) safetensor. These are widely available on HuggingFace.
 
 ## Goals
 
 Project goals:
-- High quality, plain C code
-- Runs on all devices, on Linux, especially tiny ones (RISC-V, ARM boards)
+- High-quality, plain C code
+- Runs on all Linux devices, especially tiny ones (RISC-V, ARM boards)
 - Uses the CPU, not the GPU, no accelerators.
 - Good performance
 - Small, predictable RAM usage (no crashes while loading)
 - Starts up quickly
 - Easy to set up and use
-- Production ready (within the constraints of the hardware)
+- Production-ready (within the constraints of the hardware)
 - Easy to hack on
 
 Non goals:
@@ -45,7 +45,7 @@ Non goals:
 
 ## Running
 
-You first need to download a model. It's easierst to `git clone` a model from HuggingFace. This model needs to be
+You first need to download a model. It's easiest to `git clone` a model from HuggingFace. This model needs to be
 in hte safetensors format. In this example, the `Llama-2-7b-chat-hf` model has been placed in the `models` directory.
 
 To generate the tokenizer.bin file, run the following:
@@ -69,7 +69,7 @@ OMP_NUM_THREADS=4 bin/plainllm models/Llama-2-7b-chat-hf -i "It was a dark and s
 
 ## License
 
-BoardMind is licensed AGPLv3. Note that the original llama2.c is licenced MIT - and this means the unchanged parts of the code still are.
+BoardMind is licensed AGPLv3. Note that the original llama2.c is licensed MIT.
 
     BoardMind - LLM inference cluster software written in C
     Copyright (C) 2023 Andrej Karpathy (llama2.c)
@@ -92,4 +92,4 @@ BoardMind is licensed AGPLv3. Note that the original llama2.c is licenced MIT - 
 
 Bugfixes are always welcome. For features, open a ticket first. Forking and running experiments with this code is always appreciated though!
 
-Note: please licence your contributions as MIT. This way I can switch to MIT later if the AGPLv3 is a hurdle - or licence it under a different licence to companies that are scared of the AGPL. That way I could actually get paid for working on open source sofware.
+Note: please license your contributions as MIT. This way I can switch to MIT later if the AGPLv3 is a hurdle - or relicense it for companies that are scared of the AGPL. That way I could actually get paid for working on open source software.
