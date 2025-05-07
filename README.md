@@ -67,6 +67,21 @@ Run with:
 OMP_NUM_THREADS=4 bin/plainllm models/Llama-2-7b-chat-hf -i "It was a dark and stormy night" -n 50
 ````
 
+### Clustered (WIP)
+
+On the workers (nodes):
+
+````bash
+bin/worker 1234
+````
+
+On the host, edit bin/client.c to enter the workers you're going to use. Then run:
+
+```
+make all
+bin/client models/Llama-2-7b-chat-hf -i "It was a dark and stormy night" -n 100
+````
+
 ## License
 
 BoardMind is licensed AGPLv3. Note that the original llama2.c is licensed MIT.
