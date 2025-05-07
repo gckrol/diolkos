@@ -77,7 +77,7 @@ bin/worker 1234
 
 On the host, edit bin/client.c to enter the workers you're going to use. Then run:
 
-```
+````bash
 make all
 bin/client models/Llama-2-7b-chat-hf -i "It was a dark and stormy night" -n 100
 ````
@@ -108,3 +108,23 @@ BoardMind is licensed AGPLv3. Note that the original llama2.c is licensed MIT.
 Bugfixes are always welcome. For features, open a ticket first. Forking and running experiments with this code is always appreciated though!
 
 Note: please license your contributions as MIT. This way I can switch to MIT later if the AGPLv3 is a hurdle - or relicense it for companies that are scared of the AGPL. That way I could actually get paid for working on open source software.
+
+## FAQ
+
+#### Why C? Why not Rust?
+
+I first tried forking `lm.rs`, but that was a huge hassle. Rust is great for when you know exacly what you want. Writing the code takes 10x as long, but you get production ready code on the first try.
+
+This however conflicts with the experimental nature of BoardMind. It's very nice to do something quickly in a hacky way to see if it actually works and if it is what you want. If so, you can secure it later. Besides - BoardMind is not designed to be exposed to the internet anyway.
+
+#### Why C? Why not C++?
+
+C++ has way too many complicated features. Give C a try. Everything makes sense. Some things are a bit more manual and verbose, but with a LLM helping out that's not a problem. Make sure to use plenty of asserts, and don't hesitate to run Valgrind!
+
+#### Why doesn't this use llama.cpp/ggml?
+
+It's easier to experiment when you control and know all the code. Besides, it's fun. Maybe more backends will be added in the future.
+
+#### Can we pay you to add a feature or hire you for consulting?
+
+Yes, see the [Krol Inventions](https://krolinventions.com) website.
