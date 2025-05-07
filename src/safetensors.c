@@ -14,7 +14,7 @@
 #include "tensor.h"
 #include "utils.h"
 
-Tensor *load_tensor(JSON_Object *o, const char *model_name, void * data, const char *name, size_t expected_size, quantization_type target_type) {
+Tensor *load_tensor(JSON_Object *o, const char *model_name, void * data, const char *name, size_t expected_size, quant_t target_type) {
     Tensor *tensor = calloc(1, sizeof(Tensor));
 
     JSON_Object *tensor_obj = json_object_get_object(o, name);
@@ -54,7 +54,7 @@ Tensor *load_tensor(JSON_Object *o, const char *model_name, void * data, const c
 
     // Generate cache file name
     char cache_name[512];
-    snprintf(cache_name, sizeof(cache_name), "cache/%s/%s-%s.tensor", model_name, name, quantization_type_to_string(target_type));
+    snprintf(cache_name, sizeof(cache_name), "cache/%s/%s-%s.tensor", model_name, name, quant_t_to_string(target_type));
     // Check if the cache file exists
     struct stat st;
     if (stat(cache_name, &st) == 0) {

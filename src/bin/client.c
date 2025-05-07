@@ -47,8 +47,8 @@ static int max(int a, int b) {
 static Tensor *temp_q8 = NULL;
 static Tensor *temp_f32 = NULL;
 void init_temp(int dim, int hidden_dim) {
-    temp_q8 = Tensor_create(max(dim, hidden_dim), Q8_0);
-    temp_f32 = Tensor_create(max(dim, hidden_dim), F32);
+    temp_q8 = tensor_create(max(dim, hidden_dim), Q8_0);
+    temp_f32 = tensor_create(max(dim, hidden_dim), F32);
 }
 
 static double time_in_ms2(struct timespec *start, struct timespec *end) {
@@ -58,7 +58,7 @@ static double time_in_ms2(struct timespec *start, struct timespec *end) {
 
 void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_dim) {
     // printf("matmul_remote: in: %zu xout: %zu in_dim: %d out_dim: %d\n", xt->dim, xoutt->dim, in_dim, out_dim);
-    // printf("types in: %s xout: %s wt: %s\n", quantization_type_to_string(xt->type), quantization_type_to_string(xoutt->type), quantization_type_to_string(wt->type));
+    // printf("types in: %s xout: %s wt: %s\n", quant_t_to_string(xt->type), quant_t_to_string(xoutt->type), quant_t_to_string(wt->type));
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
 

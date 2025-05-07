@@ -54,7 +54,7 @@ float f16_to_float(uint16_t h) {
     return u.f;
 }
 
-int quant_size(quantization_type type) {
+int quant_size(quant_t type) {
     switch (type) {
         case F32: return 4;
         case F16: return 2;
@@ -65,7 +65,7 @@ int quant_size(quantization_type type) {
     __builtin_unreachable();
 }
 
-int group_size(quantization_type type) {
+int group_size(quant_t type) {
     switch (type) {
         case Q8_0: return 32;
         default: assert(!"no group size");
@@ -73,7 +73,7 @@ int group_size(quantization_type type) {
     __builtin_unreachable();
 }
 
-Tensor *Tensor_create(size_t size, quantization_type type) {
+Tensor *tensor_create(size_t size, quant_t type) {
     Tensor *tensor = calloc(1, sizeof(Tensor));
     tensor->type = type;
     tensor->dim = size;
@@ -95,7 +95,7 @@ size_t Tensor_storage_size(Tensor *tensor) {
     return size;
 }
 
-void Tensor_destroy(Tensor *tensor) {
+void tensor_destroy(Tensor *tensor) {
     if (tensor == NULL) return;
     free(tensor->data);
     free(tensor);
@@ -221,7 +221,7 @@ void convert_f32_q8_slice_into(Tensor *dst, Tensor *input, size_t start, size_t 
 
 Tensor *convert_f32_q8(Tensor *input) {
     assert(input->type == F32);
-    Tensor *result = Tensor_create(input->dim, Q8_0);
+    Tensor *result = tensor_create(input->dim, Q8_0);
     convert_f32_q8_slice_into(result, input, 0, input->dim);
     return result;
 }
@@ -255,14 +255,14 @@ void convert_q8_f32_into(Tensor *dst, Tensor *input) {
 }
 
 Tensor *convert_q8_f32(Tensor *input) {
-    Tensor *result = Tensor_create(input->dim, F32);
+    Tensor *result = tensor_create(input->dim, F32);
     convert_q8_f32_into(result, input);
     return result;
 }
 
 Tensor *convert_f16_q8_0(Tensor *input) {
     assert(input->type == F16);
-    Tensor *result = Tensor_create(input->dim, Q8_0);
+    Tensor *result = tensor_create(input->dim, Q8_0);
     const int GS = 32;
     float Q_MAX = 127.0f;
 
@@ -296,7 +296,7 @@ Tensor *convert_f16_q8_0(Tensor *input) {
 
 Tensor *convert_bf16_q8_0(Tensor *input) {
     assert(input->type == BF16);
-    Tensor *result = Tensor_create(input->dim, Q8_0);
+    Tensor *result = tensor_create(input->dim, Q8_0);
     const int GS = 32;
     float Q_MAX = 127.0f;
 
@@ -330,7 +330,7 @@ Tensor *convert_bf16_q8_0(Tensor *input) {
 
 Tensor *convert_f16_f32(Tensor *input) {
     assert(input->type == F16);
-    Tensor *result = Tensor_create(input->dim, F32);
+    Tensor *result = tensor_create(input->dim, F32);
     float *data_result = data_f32(result);
 
     size_t i;
@@ -344,7 +344,7 @@ Tensor *convert_f16_f32(Tensor *input) {
 
 Tensor *convert_bf16_f32(Tensor *input) {
     assert(input->type == BF16);
-    Tensor *result = Tensor_create(input->dim, F32);
+    Tensor *result = tensor_create(input->dim, F32);
     float *data_result = data_f32(result);
 
     size_t i;
@@ -356,7 +356,7 @@ Tensor *convert_bf16_f32(Tensor *input) {
     return result;
 }
 
-Tensor *convert(Tensor *input, quantization_type type) {
+Tensor *convert(Tensor *input, quant_t type) {
     if (input->type == type) {
         return input;
     } else if (input->type == F32 && type == Q8_0) {
@@ -415,7 +415,7 @@ size_t tensor_memory(Tensor *tensor) {
     return result;
 }
 
-const char* quantization_type_to_string(quantization_type type) {
+const char* quant_t_to_string(quant_t type) {
     switch (type) {
         case F32: return "F32";
         case F16: return "F16";

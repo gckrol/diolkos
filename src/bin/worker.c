@@ -42,15 +42,15 @@ void load_matrix(int client_fd) {
 
     size_t dim = (size_t)dim_in * (size_t)dim_out;
 
-    Tensor_destroy(s->matrix);
-    Tensor_destroy(s->input_vector);
-    Tensor_destroy(s->output_vector);
+    tensor_destroy(s->matrix);
+    tensor_destroy(s->input_vector);
+    tensor_destroy(s->output_vector);
 
-    s->matrix = Tensor_create(dim, type);
-    s->input_vector = Tensor_create(dim_in, Q8_0);
-    s->output_vector = Tensor_create(dim_out, F32);
+    s->matrix = tensor_create(dim, type);
+    s->input_vector = tensor_create(dim_in, Q8_0);
+    s->output_vector = tensor_create(dim_out, F32);
 
-    printf("#%d %u x %u %s\n", slice_id, dim_in, dim_out, quantization_type_to_string(type));
+    printf("#%d %u x %u %s\n", slice_id, dim_in, dim_out, quant_t_to_string(type));
     printf("Reading %zu bytes\n", Tensor_storage_size(s->matrix));
 
     read_full(client_fd, s->matrix->data, Tensor_storage_size(s->matrix));
@@ -71,24 +71,24 @@ void multiply(int client_fd) {
     read_full(client_fd, &slice_id, sizeof(slice_id));
     Slice *s = &slices[slice_id];
     // printf("Multiplying slice %d\n", slice_id);
-    // printf("Input vector type: %s\n", quantization_type_to_string(s->input_vector->type));
+    // printf("Input vector type: %s\n", quant_t_to_string(s->input_vector->type));
     // printf("Input vector dim: %zu\n", s->input_vector->dim);
     // printf("Reading %zu bytes\n", Tensor_storage_size(s->input_vector));
     read_full(client_fd, s->input_vector->data, Tensor_storage_size(s->input_vector));
     read_end_marker(client_fd);
 
-    // printf("Input vector type: %s\n", quantization_type_to_string(s->input_vector->type));
+    // printf("Input vector type: %s\n", quant_t_to_string(s->input_vector->type));
     // for (int i = 0; i < s->input_vector->dim / 32; i++) {
     //     // printf("%f\n", s->input_vector->scale[i]);
     //     assert(!reliable_isnan(s->input_vector->scale[i]));
     // }
 
     // printf("Ready for matrix multiplication.\n");
-    // printf("Input vector type: %s\n", quantization_type_to_string(s->input_vector->type));
+    // printf("Input vector type: %s\n", quant_t_to_string(s->input_vector->type));
     // printf("Input vector dim: %zu\n", s->input_vector->dim);
-    // printf("Matrix type: %s\n", quantization_type_to_string(s->matrix->type));
+    // printf("Matrix type: %s\n", quant_t_to_string(s->matrix->type));
     // printf("Matrix dim: %zu\n", s->matrix->dim);
-    // printf("Output vector type: %s\n", quantization_type_to_string(s->output_vector->type));
+    // printf("Output vector type: %s\n", quant_t_to_string(s->output_vector->type));
     // printf("Output vector dim: %zu\n", s->output_vector->dim);
 
     matmul(s->output_vector, s->input_vector, s->matrix, s->input_vector->dim, s->output_vector->dim);
@@ -196,15 +196,15 @@ int main(int argc, char *argv[]) {
         // Free the slices
         for (int i = 0; i < MAX_SLICES; i++) {
             if (slices[i].matrix) {
-                Tensor_destroy(slices[i].matrix);
+                tensor_destroy(slices[i].matrix);
                 slices[i].matrix = NULL;
             }
             if (slices[i].input_vector) {
-                Tensor_destroy(slices[i].input_vector);
+                tensor_destroy(slices[i].input_vector);
                 slices[i].input_vector = NULL;
             }
             if (slices[i].output_vector) {
-                Tensor_destroy(slices[i].output_vector);
+                tensor_destroy(slices[i].output_vector);
                 slices[i].output_vector = NULL;
             }
         }

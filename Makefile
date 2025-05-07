@@ -8,13 +8,13 @@ CC = clang $(WARN) -Wno-gnu-folding-constant -Rpass=loop-vectorize -Rpass-missed
 
 
 # Source files and object files
-SRC = src/tokenizer.c src/sampler.c src/transformer.c src/utils.c src/safetensors.c src/parson.c src/tensor.c src/transformer_info.c src/net.c
+SRC = src/tokenizer.c src/sampler.c src/transformer.c src/utils.c src/safetensors.c src/parson.c src/tensor.c src/transformer_info.c src/net.c src/benchmarking.c
 OBJ = $(patsubst src/%.c,obj/%.o,$(SRC))
 OPT = -Ofast -march=native -flto -fopenmp #-fopenmp-simd # -fopt-info-vec-missed # -fopenmp # -fopt-info-vec-missed
 INC = -Isrc
 
 .PHONY: all
-all: bin/plainllm bin/stest bin/worker bin/client
+all: bin/plainllm bin/stest bin/worker bin/client bin/benchmark
 
 bin/%: obj/bin/%.o $(OBJ)
 	@mkdir -p bin

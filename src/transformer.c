@@ -12,21 +12,21 @@
 
 void malloc_run_state(RunState* s, Config* p) {
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
-    s->x = Tensor_create(p->dim, F32);
-    s->xb = Tensor_create(p->dim, F32);
-    s->xb2 = Tensor_create(p->dim, F32);
-    s->hb = Tensor_create(p->hidden_dim, F32);
-    s->hb2 = Tensor_create(p->hidden_dim, F32);
-    s->q = Tensor_create(p->dim, F32);
-    s->att = Tensor_create(p->n_heads * p->seq_len, F32);
-    s->logits = Tensor_create(p->vocab_size, F32);
+    s->x = tensor_create(p->dim, F32);
+    s->xb = tensor_create(p->dim, F32);
+    s->xb2 = tensor_create(p->dim, F32);
+    s->hb = tensor_create(p->hidden_dim, F32);
+    s->hb2 = tensor_create(p->hidden_dim, F32);
+    s->q = tensor_create(p->dim, F32);
+    s->att = tensor_create(p->n_heads * p->seq_len, F32);
+    s->logits = tensor_create(p->vocab_size, F32);
 
     // Using BF16 for these saves memory, and the speed is the same.
-    s->key_cache = Tensor_create(p->n_layers * p->seq_len * kv_dim, BF16);
-    s->value_cache = Tensor_create(p->n_layers * p->seq_len * kv_dim, BF16);
+    s->key_cache = tensor_create(p->n_layers * p->seq_len * kv_dim, BF16);
+    s->value_cache = tensor_create(p->n_layers * p->seq_len * kv_dim, BF16);
 
-    s->k = Tensor_create(kv_dim, F32);
-    s->v = Tensor_create(kv_dim, F32);
+    s->k = tensor_create(kv_dim, F32);
+    s->v = tensor_create(kv_dim, F32);
 }
 
 void build_transformer_from_safetensors(Transformer *t, const char* model_path) {

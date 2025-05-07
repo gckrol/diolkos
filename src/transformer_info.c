@@ -11,7 +11,7 @@
 #include "safetensors.h"
 
 // Helper function to get bit depth from quantization type
-int get_bit_depth(quantization_type qt) {
+int get_bit_depth(quant_t qt) {
     switch(qt) {
         case F32: return 32;
         case F16: return 16;
@@ -44,7 +44,7 @@ size_t print_transformer_info(Transformer* transformer) {
         const char* name;
         size_t memory;
         size_t params;
-        quantization_type type;
+        quant_t type;
     } LayerTypeInfo;
 
     // Define layer types to track
@@ -175,7 +175,7 @@ size_t print_transformer_info(Transformer* transformer) {
         
         fprintf(stderr, "%-20s %-10s %-15s %-15.2f %-15.2f\n", 
                 lt->name,
-                quantization_type_to_string(lt->type), 
+                quant_t_to_string(lt->type), 
                 memory_str,
                 (float)lt->params / 1000000, 
                 bytes_per_param);

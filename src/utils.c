@@ -98,7 +98,7 @@ static int max(int a, int b) {
 
 Tensor *temp_q8 = NULL;
 void init_utils(int dim, int hidden_dim) {
-    temp_q8 = Tensor_create(max(dim, hidden_dim), Q8_0);
+    temp_q8 = tensor_create(max(dim, hidden_dim), Q8_0);
 }
 
 void matmul_Q8_0(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix, int in_dim, int out_dim) {
