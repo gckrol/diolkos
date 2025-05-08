@@ -5,12 +5,16 @@
 #include <arpa/inet.h>   // for sockaddr_in, inet_ntoa()
 #include <assert.h>
 #include <time.h>
+#include <fcntl.h>
+#include <netinet/tcp.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
 
 #include "worker_commands.h"
 #include "tensor.h"
 #include "utils.h"
 #include "net.h"
-#include <netinet/tcp.h>
+#include "fnv1a.h"
 
 // VS Code shows this as undefined.
 #ifndef CLOCK_MONOTONIC
@@ -27,16 +31,18 @@ Slice *slices = NULL;
 #define MAX_SLICES 1024
 
 void load_matrix(int client_fd) {
-    printf("Loading matrix... ");
+    // printf("Loading matrix... ");
     uint32_t type;
     uint32_t dim_in;
     uint32_t dim_out;
     uint32_t slice_id;
+    uint128_t hash;
 
     read_full(client_fd, &slice_id, sizeof(slice_id));
     read_full(client_fd, &type, sizeof(type));
     read_full(client_fd, &dim_in, sizeof(dim_in));
     read_full(client_fd, &dim_out, sizeof(dim_out));
+    read_full(client_fd, &hash, sizeof(hash));
 
     Slice *s = &slices[slice_id];
 
@@ -50,13 +56,89 @@ void load_matrix(int client_fd) {
     s->input_vector = tensor_create(dim_in, Q8_0);
     s->output_vector = tensor_create(dim_out, F32);
 
-    printf("#%d %u x %u %s\n", slice_id, dim_in, dim_out, quant_t_to_string(type));
-    printf("Reading %zu bytes\n", Tensor_storage_size(s->matrix));
+    // printf("#%d %u x %u %s\n", slice_id, dim_in, dim_out, quant_t_to_string(type));
+    // printf("Reading %zu bytes\n", Tensor_storage_size(s->matrix));
 
     read_full(client_fd, s->matrix->data, Tensor_storage_size(s->matrix));
 
     read_end_marker(client_fd);
+
+    // Write to cache file.
+    char cache_name[512];
+    snprintf(cache_name, sizeof(cache_name), "cache/%016llx%016llx.slice", hash.high, hash.low);
+    mkdir("cache", 0755);
+    FILE *cache_file = fopen(cache_name, "wb");
+    if (cache_file == NULL) {
+        fprintf(stderr, "Failed to open cache file for writing: %s\n", cache_name);
+        exit(EXIT_FAILURE);
+    }
+    fwrite(s->matrix->data, Tensor_storage_size(s->matrix), 1, cache_file);
+    fclose(cache_file);
+    fprintf("Cache file written: %s\n", cache_name);
 }
+
+void load_matrix_hash(int client_fd) {
+    // printf("Loading matrix hash... ");
+    uint32_t slice_id;
+    uint32_t type;
+    uint32_t dim_in;
+    uint32_t dim_out;
+    uint128_t hash;
+
+    read_full(client_fd, &slice_id, sizeof(slice_id));
+    read_full(client_fd, &type, sizeof(type));
+    read_full(client_fd, &dim_in, sizeof(dim_in));
+    read_full(client_fd, &dim_out, sizeof(dim_out));
+    read_full(client_fd, &hash, sizeof(hash));
+
+    Slice *s = &slices[slice_id];
+
+    size_t dim = (size_t)dim_in * (size_t)dim_out;
+
+    tensor_destroy(s->matrix);
+    tensor_destroy(s->input_vector);
+    tensor_destroy(s->output_vector);
+
+    s->input_vector = tensor_create(dim_in, Q8_0);
+    s->output_vector = tensor_create(dim_out, F32);
+
+    // Generate cache file name
+    char cache_name[512];
+    snprintf(cache_name, sizeof(cache_name), "cache/%016llx%016llx.slice", hash.high, hash.low);
+    // printf("Cache name: %s\n", cache_name);
+    // Check if the cache file exists
+    struct stat st;
+    if (stat(cache_name, &st) == 0) {
+        // printf("Cache file found: %s\n", cache_name);
+        s->matrix = calloc(1, sizeof(Tensor));
+        // MMap the cache file
+        int fd = open(cache_name, O_RDONLY);
+        if (fd == -1) {
+            fprintf(stderr, "Failed to open cache file: %s\n", cache_name);
+            exit(EXIT_FAILURE);
+        }
+        // printf("Cache file size: %zu\n", st.st_size);
+        void *cache_data = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+        if (cache_data == MAP_FAILED) {
+            fprintf(stderr, "Failed to mmap cache file: %s\n", cache_name);
+            close(fd);
+            exit(EXIT_FAILURE);
+        }
+        s->matrix->type = type;
+        s->matrix->data = (TensorData*)cache_data;
+        s->matrix->hdim = dim_in;
+        s->matrix->vdim = dim_out;
+        s->matrix->dim = dim;
+        s->matrix->fd = fd;
+        if (type == Q8_0) {
+            s->matrix->scale = (float*)((uint8_t*)cache_data + s->matrix->dim);
+        }
+        write_full(client_fd, "\x00", 1);
+        return;
+    }
+    s->matrix = tensor_create(dim, type);
+    write_full(client_fd, "\x01", 1);
+}   
 
 static double time_in_ms2(struct timespec *start, struct timespec *end) {
     return (end->tv_sec - start->tv_sec) * 1000.0 +
@@ -179,6 +261,8 @@ int main(int argc, char *argv[]) {
             // printf("Received command: %u\n", command);
             if (command == CMD_LOAD_MATRIX) {
                 load_matrix(client_fd);
+            } else if (command == CMD_LOAD_MATRIX_HASH) {
+                load_matrix_hash(client_fd);
             } else if (command == CMD_MULTIPLY) {
                 multiply(client_fd);
             } else {

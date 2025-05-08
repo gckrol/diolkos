@@ -23,6 +23,7 @@
 #include "worker_commands.h"
 #include <assert.h>
 #include "net.h"
+#include "fnv1a.h"
 
 // VS Code shows this as undefined.
 #ifndef CLOCK_MONOTONIC
@@ -403,37 +404,69 @@ void send_slice(RemoteWorker *worker, int slice_id, Tensor *matrix) {
     uint32_t end_offset = (uint32_t)(matrix->vdim * worker->end); // Exclusive.
 
     // send the slice id and input vector to the worker
-    uint16_t command = CMD_LOAD_MATRIX;
+    uint16_t command;
     uint32_t type = matrix->type;
     uint32_t dim_in = matrix->hdim;
     uint32_t dim_out = end_offset - start_offset;
 
+    size_t start_index_bytes = start_offset * matrix->hdim * quant_size(matrix->type);
+    size_t end_index_bytes = end_offset * matrix->hdim * quant_size(matrix->type);
+
+    size_t bytes_sent = 0;
+
+    u_int8_t *data_start = (uint8_t*)matrix->data + start_index_bytes;
+    size_t data_size = end_index_bytes - start_index_bytes;
+    size_t scale_size_bytes = 0;
+    if (matrix->type == Q8_0) {
+        scale_size_bytes = (end_offset - start_offset) * matrix->hdim / group_size(matrix->type) * sizeof(float);
+    }
+    assert(data_start + data_size <= (uint8_t*)matrix->data + Tensor_storage_size(matrix));
+
+    // Check if the worker perhaps has this data already.
+    uint128_t hash = fnv1a_128(data_start, data_size);
+    if (matrix->type == Q8_0) {
+        // We need to hash the scale as well.
+        uint8_t *scale_start = (uint8_t*)matrix->scale + start_offset * matrix->hdim / group_size(matrix->type) * sizeof(float);
+        assert(scale_start + scale_size_bytes <= (uint8_t*)matrix->scale + Tensor_storage_size(matrix));
+        fnv1a_128_continue(scale_start, scale_size_bytes, &hash);
+    }
+    command = CMD_LOAD_MATRIX_HASH;
     write_full(worker->fd, &command, sizeof(command));
     write_full(worker->fd, &slice_id, sizeof(slice_id));
     write_full(worker->fd, &type, sizeof(type));
     write_full(worker->fd, &dim_in, sizeof(dim_in));
     write_full(worker->fd, &dim_out, sizeof(dim_out));
+    write_full(worker->fd, &hash, sizeof(hash));
 
-    size_t start_index = start_offset * matrix->hdim * quant_size(matrix->type);
-    size_t end_index = end_offset * matrix->hdim * quant_size(matrix->type);
+    uint8_t response;
+    read_full(worker->fd, &response, sizeof(response));
+    if (response == 0) {
+        // The worker has the data already, so we don't need to send it.
+        // printf("Worker %d has the data for slice %d\n", worker->fd, slice_id);
+        matrix->tensor_id = slice_id;
+        return;
+    }
 
-    size_t bytes_sent = 0;
+    command = CMD_LOAD_MATRIX;
+    write_full(worker->fd, &command, sizeof(command));
+    write_full(worker->fd, &slice_id, sizeof(slice_id));
+    write_full(worker->fd, &type, sizeof(type));
+    write_full(worker->fd, &dim_in, sizeof(dim_in));
+    write_full(worker->fd, &dim_out, sizeof(dim_out));
+    write_full(worker->fd, &hash, sizeof(hash));
 
-    u_int8_t *data_start = (uint8_t*)matrix->data + start_index * quant_size(matrix->type);
-    size_t data_size = (end_index - start_index) * quant_size(matrix->type);
-    assert(data_start + data_size <= (uint8_t*)matrix->data + Tensor_storage_size(matrix));
     write_full(worker->fd, data_start, data_size);
     bytes_sent += data_size;
 
     if (matrix->type == Q8_0) {
         float *scale_start = matrix->scale + start_offset * matrix->hdim / group_size(matrix->type);
-        size_t scale_size = (end_offset - start_offset) * matrix->hdim / group_size(matrix->type) * sizeof(float);
-        assert((uint8_t*)scale_start + scale_size <= (float*)matrix->scale + matrix->dim / group_size(matrix->type));
+        size_t scale_size_bytes = (end_offset - start_offset) * matrix->hdim / group_size(matrix->type) * sizeof(float);
+        assert((uint8_t*)scale_start + scale_size_bytes <= (float*)matrix->scale + matrix->dim / group_size(matrix->type));
 
-        write_full(worker->fd, scale_start, scale_size);
-        bytes_sent += scale_size;
+        write_full(worker->fd, scale_start, scale_size_bytes);
+        bytes_sent += scale_size_bytes;
     }
-    printf("Sent %zu bytes for slice %d\n", bytes_sent, slice_id);
+    printf("Sent %zu bytes for slice %d Hash: %016llx%016llx\n", bytes_sent, slice_id, hash.high, hash.low);
 
     write_end_marker(worker->fd);
 
@@ -513,12 +546,12 @@ int main(int argc, char *argv[]) {
     // Connect to the workers and upload their matrices.
 
     // Define the workers. TODO: load from config file, or have them register.
-    num_workers = 2;
+    num_workers = 1;
     workers = calloc(num_workers, sizeof(RemoteWorker));
     workers[0].address = "127.0.0.1";
     workers[0].port = 1234;
     workers[0].start = 0.0f;
-    workers[0].end = 0.5f;
+    workers[0].end = 1.0f;
     if (num_workers > 1) {
         workers[1].address = "127.0.0.1";
         workers[1].port = 1235;

@@ -97,6 +97,12 @@ size_t Tensor_storage_size(Tensor *tensor) {
 
 void tensor_destroy(Tensor *tensor) {
     if (tensor == NULL) return;
+    if (tensor->fd) {
+        munmap(tensor->data, Tensor_storage_size(tensor));
+        close(tensor->fd);
+        free(tensor);
+        return;
+    }
     free(tensor->data);
     free(tensor);
 }

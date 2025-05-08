@@ -36,21 +36,23 @@ Tensor *load_tensor(JSON_Object *o, const char *model_name, void * data, const c
     }
     JSON_Array *shape = json_object_get_array(tensor_obj, "shape");
     size_t n_dims = json_array_get_count(shape);
-    size_t size = 1;
+
+    tensor->vdim = 1;
+    tensor->hdim = 1;
+
     for (size_t i = 0; i < n_dims; i++) {
         size_t d = json_array_get_number(shape, i);
-        size *= d;
         if (i == 0) {
             tensor->vdim = d;
         } else if (i == 1) {
             tensor->hdim = d;
         }
     }
-    if (size != expected_size) {
-        fprintf(stderr, "Tensor size mismatch for %s: expected %zu, got %zu\n", name, expected_size, size);
+    tensor->dim = tensor->vdim * tensor->hdim;
+    if (tensor->dim != expected_size) {
+        fprintf(stderr, "Tensor size mismatch for %s: expected %zu, got %zu\n", name, expected_size, tensor->dim);
         exit(EXIT_FAILURE);
     }
-    tensor->dim = size;
 
     // Generate cache file name
     char cache_name[512];
@@ -82,8 +84,8 @@ Tensor *load_tensor(JSON_Object *o, const char *model_name, void * data, const c
     size_t start = json_array_get_number(data_offsets, 0);
     size_t end = json_array_get_number(data_offsets, 1);
     size_t data_size = end - start;
-    if (data_size != size * item_size) {
-        fprintf(stderr, "Data size mismatch for %s: expected %zu, got %zu\n", name, size * sizeof(float), data_size);
+    if (data_size != tensor->dim * item_size) {
+        fprintf(stderr, "Data size mismatch for %s: expected %zu, got %zu\n", name, tensor->dim * sizeof(float), data_size);
         exit(EXIT_FAILURE);
     }
 
