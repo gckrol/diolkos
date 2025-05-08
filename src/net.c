@@ -2,6 +2,8 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <sys/uio.h>
 
 size_t read_full(int fd, void *buf, size_t count) {
     size_t bytes_read = 0;
@@ -21,6 +23,53 @@ size_t write_full(int fd, const void *buf, size_t count) {
         bytes_written += w;
     }
     return bytes_written;
+}
+
+ssize_t writev_full(int fd, struct iovec *iov, int iovcnt) {
+    ssize_t total = 0;
+    while (iovcnt > 0) {
+        ssize_t n = writev(fd, iov, iovcnt);
+        if (n <= 0) return -1; // error
+
+        total += n;
+
+        // Advance the iov array
+        while (n > 0 && iovcnt > 0) {
+            if (n >= (ssize_t)iov->iov_len) {
+                n -= iov->iov_len;
+                iov++;
+                iovcnt--;
+            } else {
+                iov->iov_base = (char *)iov->iov_base + n;
+                iov->iov_len -= n;
+                n = 0;
+            }
+        }
+    }
+    return total;
+}
+
+ssize_t readv_full(int fd, struct iovec *iov, int iovcnt) {
+    ssize_t total = 0;
+    while (iovcnt > 0) {
+        ssize_t n = readv(fd, iov, iovcnt);
+        if (n <= 0) return -1; // EOF or error
+
+        total += n;
+
+        while (n > 0 && iovcnt > 0) {
+            if (n >= (ssize_t)iov->iov_len) {
+                n -= iov->iov_len;
+                iov++;
+                iovcnt--;
+            } else {
+                iov->iov_base = (char *)iov->iov_base + n;
+                iov->iov_len -= n;
+                n = 0;
+            }
+        }
+    }
+    return total;
 }
 
 void read_end_marker(int client_fd) {

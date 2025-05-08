@@ -156,8 +156,23 @@ void multiply(int client_fd) {
     // printf("Input vector type: %s\n", quant_t_to_string(s->input_vector->type));
     // printf("Input vector dim: %zu\n", s->input_vector->dim);
     // printf("Reading %zu bytes\n", Tensor_storage_size(s->input_vector));
-    read_full(client_fd, s->input_vector->data, Tensor_storage_size(s->input_vector));
-    read_end_marker(client_fd);
+    struct iovec iov1[2];
+    uint32_t end_marker = 0;
+    
+    iov1[0].iov_base = s->input_vector->data;
+    iov1[0].iov_len = Tensor_storage_size(s->input_vector);
+    
+    iov1[1].iov_base = &end_marker;
+    iov1[1].iov_len = sizeof(end_marker);
+    
+    readv_full(client_fd, iov1, 2);
+    
+    // Verify the end marker
+    if (end_marker != 0xCAFEF00D) {
+        fprintf(stderr, "Error: expected end marker 0xCAFEF00D, got 0x%X\n", end_marker);
+        close(client_fd);
+        exit(EXIT_FAILURE);
+    }
 
     // printf("Input vector type: %s\n", quant_t_to_string(s->input_vector->type));
     // for (int i = 0; i < s->input_vector->dim / 32; i++) {
@@ -176,8 +191,15 @@ void multiply(int client_fd) {
     matmul(s->output_vector, s->input_vector, s->matrix, s->input_vector->dim, s->output_vector->dim);
 
     // printf("Writing %zu bytes\n", s->output_vector->dim * quant_size(s->output_vector->type));
-    write_full(client_fd, s->output_vector->data, s->output_vector->dim * quant_size(s->output_vector->type));
-    write_end_marker(client_fd);
+    struct iovec iov[2];
+    
+    iov[0].iov_base = s->output_vector->data;
+    iov[0].iov_len = s->output_vector->dim * quant_size(s->output_vector->type);
+    
+    iov[1].iov_base = &end_marker;
+    iov[1].iov_len = sizeof(end_marker);
+    
+    writev_full(client_fd, iov, 2);
 
     clock_gettime(CLOCK_MONOTONIC, &end);
     // printf("Function took %.3f ms\n", time_in_ms2(&start, &end));    

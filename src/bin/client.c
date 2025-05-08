@@ -76,18 +76,33 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
     for (int w=0;w<num_workers;w++) {
         RemoteWorker *worker = &workers[w];
         // printf("Worker %d: %s:%d, start: %f, end %f\n", w, worker->address, worker->port, worker->start, worker->end);
+        
+        // Prepare all data to be sent in a single writev call
+        struct iovec iov[5];  // Now including end marker
         uint16_t command = CMD_MULTIPLY;
-        write_full(worker->fd, &command, sizeof(command));
         uint32_t slice_id = wt->tensor_id;
-        write_full(worker->fd, &slice_id, sizeof(slice_id));
-
+        uint32_t end_marker = 0xCAFEF00D;
         size_t data_size = xt->dim;
-        // printf("Sending %zu bytes to worker %d\n", data_size + data_size / 32 * sizeof(float), w);
-        write_full(worker->fd, temp_q8->data, data_size);
-        write_full(worker->fd, temp_q8->scale, data_size / 32 * sizeof(float));
-
-        write_end_marker(worker->fd);
+        
+        iov[0].iov_base = &command;
+        iov[0].iov_len = sizeof(command);
+        
+        iov[1].iov_base = &slice_id;
+        iov[1].iov_len = sizeof(slice_id);
+        
+        iov[2].iov_base = temp_q8->data;
+        iov[2].iov_len = data_size;
+        
+        iov[3].iov_base = temp_q8->scale;
+        iov[3].iov_len = data_size / 32 * sizeof(float);
+        
+        iov[4].iov_base = &end_marker;
+        iov[4].iov_len = sizeof(end_marker);
+        
+        // Send all data in one system call
+        writev_full(worker->fd, iov, 5);
     }
+
     // Read outputs.
     for (int w=0;w<num_workers;w++) {
         RemoteWorker *worker = &workers[w];
@@ -97,9 +112,26 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
         uint32_t start_offset = (uint32_t)(xoutt->dim * worker->start); // Inclusive.
         uint32_t end_offset = (uint32_t)(xoutt->dim * worker->end); // Exclusive.
         // printf("Worker %d: start_offset: %u, end_offset: %u\n", w, start_offset, end_offset);
-        read_full(worker->fd, (float*)xoutt->data + start_offset, (end_offset - start_offset) * sizeof(float));
-        read_end_marker(worker->fd);
-    } 
+        
+        // Read result data and end marker in a single system call
+        uint32_t end_marker = 0;
+        struct iovec iov[2];
+        
+        iov[0].iov_base = (float*)xoutt->data + start_offset;
+        iov[0].iov_len = (end_offset - start_offset) * sizeof(float);
+        
+        iov[1].iov_base = &end_marker;
+        iov[1].iov_len = sizeof(end_marker);
+        
+        readv_full(worker->fd, iov, 2);
+        
+        // Verify the end marker
+        if (end_marker != 0xCAFEF00D) {
+            fprintf(stderr, "Error: expected end marker 0xCAFEF00D, got 0x%X\n", end_marker);
+            close(worker->fd);
+            exit(EXIT_FAILURE);
+        }
+    }
     // printf("matmul_remote done\n");
 
     // Verify that the output is correct.
