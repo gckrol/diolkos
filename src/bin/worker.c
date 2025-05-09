@@ -145,7 +145,7 @@ static double time_in_ms2(struct timespec *start, struct timespec *end) {
            (end->tv_nsec - start->tv_nsec) / 1e6;
 }
 
-void multiply(int client_fd) {
+void multiply(int client_fd, bool perform_matmul) {
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
 
@@ -188,8 +188,10 @@ void multiply(int client_fd) {
     // printf("Output vector type: %s\n", quant_t_to_string(s->output_vector->type));
     // printf("Output vector dim: %zu\n", s->output_vector->dim);
 
-    matmul(s->output_vector, s->input_vector, s->matrix, s->input_vector->dim, s->output_vector->dim);
-
+    if (perform_matmul) {
+        matmul(s->output_vector, s->input_vector, s->matrix, s->input_vector->dim, s->output_vector->dim);
+    }
+    
     // printf("Writing %zu bytes\n", s->output_vector->dim * quant_size(s->output_vector->type));
     struct iovec iov[2];
     
@@ -286,7 +288,9 @@ int main(int argc, char *argv[]) {
             } else if (command == CMD_LOAD_MATRIX_HASH) {
                 load_matrix_hash(client_fd);
             } else if (command == CMD_MULTIPLY) {
-                multiply(client_fd);
+                multiply(client_fd, true);
+            } else if (command == CMD_MULTIPLY_OVERHEAD) {
+                multiply(client_fd, false);
             } else {
                 printf("Unknown command: %u\n", command);
                 break;

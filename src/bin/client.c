@@ -168,6 +168,78 @@ long time_in_ms(void) {
     return time.tv_sec * 1000 + time.tv_nsec / 1000000;
 }
 
+// Benchmark client overhead using CMD_MULTIPLY_OVERHEAD
+float benchmark_overhead(RemoteWorker *worker, int iterations) {
+    struct timespec start, end;
+    double total_time = 0.0;
+    const int slice_id = 7; // Hardcoded slice id for benchmark
+    
+    printf("Benchmarking client overhead for worker %s:%d (%d iterations)...\n", 
+           worker->address, worker->port, iterations);
+    
+    // Create dummy input data of reasonable size
+    const size_t data_size = 4096;
+    uint8_t dummy_data[data_size];
+    float dummy_scale[data_size / 32];
+    memset(dummy_data, 0, data_size);
+    memset(dummy_scale, 0, data_size / 32 * sizeof(float));
+    
+    for (int i = 0; i < iterations; i++) {
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        
+        // Send command using the same pattern as matmul_remote
+        struct iovec iov[5];
+        uint16_t command = CMD_MULTIPLY_OVERHEAD;
+        uint32_t end_marker = 0xCAFEF00D;
+        
+        iov[0].iov_base = &command;
+        iov[0].iov_len = sizeof(command);
+        
+        iov[1].iov_base = (void*)&slice_id;
+        iov[1].iov_len = sizeof(slice_id);
+        
+        iov[2].iov_base = dummy_data;
+        iov[2].iov_len = data_size;
+        
+        iov[3].iov_base = dummy_scale;
+        iov[3].iov_len = data_size / 32 * sizeof(float);
+        
+        iov[4].iov_base = &end_marker;
+        iov[4].iov_len = sizeof(end_marker);
+        
+        // Send all data in one system call
+        writev_full(worker->fd, iov, 5);
+        
+        // Read back results (same pattern as matmul_remote)
+        float dummy_output[data_size];
+        end_marker = 0;
+        
+        struct iovec read_iov[2];
+        read_iov[0].iov_base = dummy_output;
+        read_iov[0].iov_len = sizeof(dummy_output);
+        
+        read_iov[1].iov_base = &end_marker;
+        read_iov[1].iov_len = sizeof(end_marker);
+        
+        readv_full(worker->fd, read_iov, 2);
+        
+        // Verify the end marker
+        if (end_marker != 0xCAFEF00D) {
+            fprintf(stderr, "Error: expected end marker 0xCAFEF00D, got 0x%X\n", end_marker);
+            close(worker->fd);
+            exit(EXIT_FAILURE);
+        }
+        
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        double elapsed_ns = (end.tv_sec - start.tv_sec) * 1e9 + (end.tv_nsec - start.tv_nsec);
+        total_time += elapsed_ns;
+    }
+    
+    double avg_time_ns = total_time / iterations;
+    printf("Average client overhead: %.3f ns (%.3f ms)\n", avg_time_ns, avg_time_ns / 1e6);
+    return (float)(avg_time_ns / 1e6); // Return value in milliseconds for compatibility
+}
+
 Tensor* forward_remote(Transformer* transformer, int token, int pos) {
     // a few convenience variables
     Config* p = &transformer->config;
@@ -567,6 +639,9 @@ int main(int argc, char *argv[]) {
     if (steps == 0 || steps > transformer.config.seq_len) steps = transformer.config.seq_len; // override to ~max length
     init_temp(transformer.config.dim, transformer.config.hidden_dim);
 
+    // Print total number of matmul_remote calls for this model
+    printf("Total number of matmul_remote calls: %d\n", transformer.config.n_layers * 7);
+
     // build the Tokenizer via the tokenizer .bin file
     Tokenizer tokenizer;
     build_tokenizer(&tokenizer, tokenizer_path);
@@ -636,6 +711,13 @@ int main(int argc, char *argv[]) {
     // Print elapsed initialization time
     long end_time = time_in_ms();
     fprintf(stderr, "Initialization took %ld ms\n", (end_time - start_time));
+    
+    // Benchmark client overhead for each worker
+    printf("Running client overhead benchmarks...\n");
+    for (int i = 0; i < num_workers; i++) {
+        benchmark_overhead(&workers[i], 10000);
+    }
+    printf("Client overhead benchmarks complete\n");
 
     size_t total_params = print_transformer_info(&transformer);
 

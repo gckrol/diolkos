@@ -3,4 +3,5 @@ typedef enum Commands {
     CMD_LOAD_MATRIX,
     CMD_LOAD_MATRIX_HASH,
     CMD_MULTIPLY,
+    CMD_MULTIPLY_OVERHEAD
 } Commands;
