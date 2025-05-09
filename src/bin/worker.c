@@ -273,6 +273,10 @@ int main(int argc, char *argv[]) {
         int flag = 1;
         setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(int));
 
+        // Busy wait (more CPU, but much lower latency).
+        int val = 1;
+        setsockopt(client_fd, SOL_SOCKET, SO_BUSY_POLL, &val, sizeof(val));
+
         printf("Connected to client: %s\n", inet_ntoa(client_addr.sin_addr));
 
         for (;;) {

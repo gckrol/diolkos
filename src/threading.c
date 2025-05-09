@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include <sched.h>      // For CPU_SET, CPU_ZERO, cpu_set_t
 #include <unistd.h>     // For sysconf
+#include <sched.h>
 
 #include "tensor.h"
 
@@ -63,6 +64,11 @@ void *worker_fn(void *arg) {
     cpu_set_t cpuset;
     CPU_ZERO(&cpuset);
     CPU_SET(ctx->tid, &cpuset);
+
+    struct sched_param param = { .sched_priority = 50 };
+    if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) != 0) {
+        perror("pthread_setschedparam");
+    }
     
     if (pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0) {
         fprintf(stderr, "Warning: Failed to set thread affinity for thread %d\n", ctx->tid);

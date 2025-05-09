@@ -172,7 +172,7 @@ long time_in_ms(void) {
 float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations) {
     struct timespec start, end;
     double total_time = 0.0;
-    Tensor *matrix = m->layers[0].wk;
+    Tensor *matrix = m->layers[0].w1; // Largest matrix we have.
     const int slice_id = matrix->tensor_id;
     
     printf("Benchmarking client overhead for worker %s:%d (%d iterations)...\n", 
@@ -239,7 +239,8 @@ float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations) {
     }
     
     double avg_time_ns = total_time / iterations;
-    printf("Average client overhead: %.3f ns (%.3f ms)\n", avg_time_ns, avg_time_ns / 1e6);
+    printf("Average client overhead: %.3f ns (%.3f ms) input size: %zu bytes, output size: %zu bytes)\n",
+           avg_time_ns, avg_time_ns / 1e6, data_size, output_size);
     return (float)(avg_time_ns / 1e6); // Return value in milliseconds for compatibility
 }
 
@@ -662,11 +663,11 @@ int main(int argc, char *argv[]) {
     // workers[0].address = "127.0.0.1";
     // workers[0].port = 1234;
     // workers[0].start = 0.0f;
-    // workers[0].end = 0.5f;
+    // workers[0].end = 0.75f;
     // if (num_workers > 1) {
     //     workers[1].address = "192.168.178.12";
     //     workers[1].port = 1234;
-    //     workers[1].start = 0.5f;
+    //     workers[1].start = 0.75f;
     //     workers[1].end = 1.0f;
     // }
 
@@ -676,6 +677,13 @@ int main(int argc, char *argv[]) {
     workers[0].port = 1234;
     workers[0].start = 0.0f;
     workers[0].end = 1.0f;
+
+    // num_workers = 1;
+    // workers = calloc(num_workers, sizeof(RemoteWorker));
+    // workers[0].address = "192.168.178.12";
+    // workers[0].port = 1234;
+    // workers[0].start = 0.0f;
+    // workers[0].end = 1.0f;
 
     // Connect to each of them.
     for (int i = 0; i < num_workers; i++) {
@@ -698,6 +706,10 @@ int main(int argc, char *argv[]) {
 
         int flag = 1;
         setsockopt(workers[i].fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(int));
+
+        // Busy wait (more CPU, but much lower latency).
+        int val = 1;
+        setsockopt(workers[i].fd, SOL_SOCKET, SO_BUSY_POLL, &val, sizeof(val));
 
         // Loop over all matrices, and send the slice to the worker.
         Model *m = transformer.safetensors;
