@@ -193,16 +193,19 @@ void multiply(int client_fd, bool perform_matmul) {
         matmul_parallel(s->output_vector, s->input_vector, s->matrix, s->input_vector->dim, s->output_vector->dim);
     }
     
+    Tensor *temp_q8 = convert_f32_q8(s->output_vector); // TODO don't allocate every time.
+
     // printf("Writing %zu bytes\n", s->output_vector->dim * quant_size(s->output_vector->type));
     struct iovec iov[2];
     
-    iov[0].iov_base = s->output_vector->data;
-    iov[0].iov_len = s->output_vector->dim * quant_size(s->output_vector->type);
+    iov[0].iov_base = temp_q8->data;
+    iov[0].iov_len = Tensor_storage_size(temp_q8);
     
     iov[1].iov_base = &end_marker;
     iov[1].iov_len = sizeof(end_marker);
     
     writev_full(client_fd, iov, 2);
+
 
     clock_gettime(CLOCK_MONOTONIC, &end);
     // printf("Function took %.3f ms\n", time_in_ms2(&start, &end));    

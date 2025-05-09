@@ -233,6 +233,10 @@ Tensor *convert_f32_q8(Tensor *input) {
 }
 
 void convert_q8_f32_slice_into(Tensor *dst, Tensor *input, size_t start, size_t length) {
+    convert_q8_f32_slice_into_offset(dst, input, start, length, 0);
+}
+
+void convert_q8_f32_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t offset) {
     assert(input->type == Q8_0);
     assert(dst->type == F32);
     assert(input->dim >= start+length);
@@ -250,7 +254,7 @@ void convert_q8_f32_slice_into(Tensor *dst, Tensor *input, size_t start, size_t 
 
         #pragma omp simd
         for (size_t j = 0; j < GS; j++) {
-            output_data[i + j] = (float)input_data[i + j] * max_val;
+            output_data[i + j + offset] = (float)input_data[i + j] * max_val;
         }
     }
 }

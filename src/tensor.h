@@ -41,6 +41,7 @@ void convert_f32_q8_slice_into_offset(Tensor *dst, Tensor *input, size_t start, 
 void convert_f32_f32_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t dst_offset);
 void convert_bf16_f32_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t dst_offset);
 void convert_f32_bf16_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t dst_offset);
+void convert_q8_f32_slice_into_offset(Tensor *dst, Tensor *input, size_t start, size_t length, size_t offset);
     
 Tensor *convert_f32_q8(Tensor *input);
 Tensor *convert_f16_q8_0(Tensor *input);

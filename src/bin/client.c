@@ -108,22 +108,24 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
         RemoteWorker *worker = &workers[w];
         // We get back a slice of a certain number of rows.
         assert(xoutt->type == F32);
-
         uint32_t start_offset = (uint32_t)(xoutt->dim * worker->start); // Inclusive.
         uint32_t end_offset = (uint32_t)(xoutt->dim * worker->end); // Exclusive.
         // printf("Worker %d: start_offset: %u, end_offset: %u\n", w, start_offset, end_offset);
         
         // Read result data and end marker in a single system call
         uint32_t end_marker = 0;
-        struct iovec iov[2];
+        struct iovec iov[3];
         
-        iov[0].iov_base = (float*)xoutt->data + start_offset;
-        iov[0].iov_len = (end_offset - start_offset) * sizeof(float);
+        iov[0].iov_base = temp_q8->data;
+        iov[0].iov_len = (end_offset - start_offset) * sizeof(uint8_t);
+
+        iov[1].iov_base = temp_q8->scale;
+        iov[1].iov_len = (end_offset - start_offset) / 32 * sizeof(float);
+
+        iov[2].iov_base = &end_marker;
+        iov[2].iov_len = sizeof(end_marker);
         
-        iov[1].iov_base = &end_marker;
-        iov[1].iov_len = sizeof(end_marker);
-        
-        readv_full(worker->fd, iov, 2);
+        readv_full(worker->fd, iov, 3);
         
         // Verify the end marker
         if (end_marker != 0xCAFEF00D) {
@@ -131,6 +133,12 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
             close(worker->fd);
             exit(EXIT_FAILURE);
         }
+
+        // Dequantize
+        // TODO: keep the activations as q8 if possible.
+        //printf("Dequantizing %zu bytes\n", (end_offset - start_offset) * sizeof(float));
+        //convert_into(xoutt, temp_q8);
+        convert_q8_f32_slice_into_offset(xoutt, temp_q8, 0, end_offset - start_offset, start_offset);
     }
     // printf("matmul_remote done\n");
 
@@ -183,6 +191,7 @@ float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations) {
     memset(dummy_scale, 0, data_size / 32 * sizeof(float));
 
     size_t output_size = (size_t)(matrix->vdim * worker->end) - (size_t)(matrix->vdim * worker->start);
+    output_size += output_size / 32 * sizeof(float); // Scale
     
     for (int i = 0; i < iterations; i++) {
         clock_gettime(CLOCK_MONOTONIC, &start);
@@ -211,7 +220,7 @@ float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations) {
         writev_full(worker->fd, iov, 5);
         
         // Read back results (same pattern as matmul_remote)
-        float dummy_output[output_size];
+        uint8_t dummy_output[output_size];
         end_marker = 0;
         
         struct iovec read_iov[2];
@@ -236,9 +245,9 @@ float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations) {
     }
     
     double avg_time_ns = total_time / iterations;
-    printf("Worker %s:%d: network overhead: %.3f ns (%.3f ms) input size: %zu bytes, output size: %zu bytes)\n",
+    printf("Worker %s:%d: network overhead: %.3f ms (%.3f us) input size: %zu bytes, output size: %zu bytes)\n",
            worker->address, worker->port,
-           avg_time_ns, avg_time_ns / 1e6, data_size, output_size);
+           avg_time_ns / 1e6, avg_time_ns / 1e3, data_size + data_size/32*sizeof(float), output_size);
     return (float)(avg_time_ns / 1e6); // Return value in milliseconds for compatibility
 }
 
@@ -271,8 +280,8 @@ float benchmark_latency(RemoteWorker *worker, int iterations) {
     }
     
     double avg_time_ns = total_time / iterations;
-    printf("Worker %s:%d: average round-trip latency: %.3f ns (%.3f ms)\n",
-           worker->address, worker->port, avg_time_ns / 1e6);
+    printf("Worker %s:%d: average round-trip latency: %.3f ms (%.3f us)\n",
+           worker->address, worker->port, avg_time_ns / 1e6, avg_time_ns / 1e3);
     return (float)(avg_time_ns / 1e6); // Return value in milliseconds
 }
 

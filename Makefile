@@ -4,19 +4,27 @@
 
 WARN = -Wall -Wextra -Wpedantic -Wstrict-prototypes -Wpointer-arith -Wcast-qual -Wwrite-strings
 # CC = gcc $(WARN) -fopt-info-vec
-CC = clang $(WARN) -Wno-gnu-folding-constant -Rpass=loop-vectorize -Rpass-missed=loop-vectorize -Rpass-analysis=loop-vectorize -fno-unroll-loops
+CC = clang $(WARN) -Wno-gnu-folding-constant -Rpass=loop-vectorize -fno-unroll-loops #  -Rpass-missed=loop-vectorize -Rpass-analysis=loop-vectorize
 
 
 # Source files and object files
 SRC = $(wildcard src/*.c)
 OBJ = $(patsubst src/%.c,obj/%.o,$(SRC))
-OPT = -Ofast -march=native -flto -fopenmp #-fopenmp-simd # -fopt-info-vec-missed # -fopenmp # -fopt-info-vec-missed
+OBJ_OMP = $(patsubst src/%.c,obj/omp/%.o,$(SRC))
+OPT_OMP = -Ofast -march=native -flto -fopenmp #-fopenmp-simd # -fopt-info-vec-missed # -fopenmp # -fopt-info-vec-missed
+OPT = -Ofast -march=native -flto -fopenmp-simd -pthread # -fopt-info-vec-missed # -fopenmp # -fopt-info-vec-missed
 INC = -Isrc
 
 .PHONY: all
 all: bin/plainllm bin/stest bin/worker bin/client bin/benchmark
 
-bin/%: obj/bin/%.o $(OBJ)
+# Use OMP by default.
+bin/%: obj/bin/omp/%.o $(OBJ_OMP)
+	@mkdir -p bin
+	$(CC) $(OPT_OMP) $(INC) -g -o $@ $^ -lm
+
+# No OMP for the worker - it uses pthreads.
+bin/worker: obj/bin/worker.o $(OBJ)
 	@mkdir -p bin
 	$(CC) $(OPT) $(INC) -g -o $@ $^ -lm
 
@@ -24,10 +32,22 @@ obj/%.o: src/%.c
 	@mkdir -p obj
 	$(CC) $(OPT) $(INC) -g -c -o $@ $<
 
+obj/omp/%.o: src/%.c
+	@mkdir -p obj
+	@mkdir -p obj/omp
+	$(CC) $(OPT_OMP) $(INC) -g -c -o $@ $<
+
 obj/bin/%.o: src/bin/%.c
 	@mkdir -p obj
 	@mkdir -p obj/bin
 	$(CC) $(OPT) $(INC) -g -c -o $@ $<
+
+obj/bin/omp/%.o: src/bin/%.c
+	@mkdir -p obj
+	@mkdir -p obj/bin
+	@mkdir -p obj/bin/omp
+	$(CC) $(OPT_OMP) $(INC) -g -c -o $@ $<
+
 
 # Useful for testing - build + run with the small stories model.
 .PHONY: run
