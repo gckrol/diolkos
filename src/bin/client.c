@@ -169,20 +169,23 @@ long time_in_ms(void) {
 }
 
 // Benchmark client overhead using CMD_MULTIPLY_OVERHEAD
-float benchmark_overhead(RemoteWorker *worker, int iterations) {
+float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations) {
     struct timespec start, end;
     double total_time = 0.0;
-    const int slice_id = 7; // Hardcoded slice id for benchmark
+    Tensor *matrix = m->layers[0].wk;
+    const int slice_id = matrix->tensor_id;
     
     printf("Benchmarking client overhead for worker %s:%d (%d iterations)...\n", 
            worker->address, worker->port, iterations);
     
     // Create dummy input data of reasonable size
-    const size_t data_size = 4096;
+    const size_t data_size = matrix->hdim;
     uint8_t dummy_data[data_size];
     float dummy_scale[data_size / 32];
     memset(dummy_data, 0, data_size);
     memset(dummy_scale, 0, data_size / 32 * sizeof(float));
+
+    size_t output_size = (size_t)(matrix->vdim * worker->end) - (size_t)(matrix->vdim * worker->start);
     
     for (int i = 0; i < iterations; i++) {
         clock_gettime(CLOCK_MONOTONIC, &start);
@@ -211,7 +214,7 @@ float benchmark_overhead(RemoteWorker *worker, int iterations) {
         writev_full(worker->fd, iov, 5);
         
         // Read back results (same pattern as matmul_remote)
-        float dummy_output[data_size];
+        float dummy_output[output_size];
         end_marker = 0;
         
         struct iovec read_iov[2];
@@ -484,8 +487,9 @@ float generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
     // report achieved tok/s (pos-1 because the timer starts after first iteration)
     if (pos > 1) {
         long end = time_in_ms();
+        int remote_matmuls = transformer->safetensors->config->n_layers * 7;
         tokens_per_second = (float)(pos - 1) * 1000.0f / (end - start);
-        fprintf(stderr, "achieved tok/s: %.2f\n", tokens_per_second);
+        fprintf(stderr, "Speed: %.2f tok/s,  %.2f ms/token %.2f ms/rpc\n", tokens_per_second, 1000.0f / tokens_per_second, 1000.0f / tokens_per_second / remote_matmuls);
     }
 
     free(prompt_tokens);
@@ -653,18 +657,25 @@ int main(int argc, char *argv[]) {
     // Connect to the workers and upload their matrices.
 
     // Define the workers. TODO: load from config file, or have them register.
+    // num_workers = 2;
+    // workers = calloc(num_workers, sizeof(RemoteWorker));
+    // workers[0].address = "127.0.0.1";
+    // workers[0].port = 1234;
+    // workers[0].start = 0.0f;
+    // workers[0].end = 0.5f;
+    // if (num_workers > 1) {
+    //     workers[1].address = "192.168.178.12";
+    //     workers[1].port = 1234;
+    //     workers[1].start = 0.5f;
+    //     workers[1].end = 1.0f;
+    // }
+
     num_workers = 1;
     workers = calloc(num_workers, sizeof(RemoteWorker));
     workers[0].address = "127.0.0.1";
     workers[0].port = 1234;
     workers[0].start = 0.0f;
     workers[0].end = 1.0f;
-    if (num_workers > 1) {
-        workers[1].address = "127.0.0.1";
-        workers[1].port = 1235;
-        workers[1].start = 0.5f;
-        workers[1].end = 1.0f;
-    }
 
     // Connect to each of them.
     for (int i = 0; i < num_workers; i++) {
@@ -715,7 +726,7 @@ int main(int argc, char *argv[]) {
     // Benchmark client overhead for each worker
     printf("Running client overhead benchmarks...\n");
     for (int i = 0; i < num_workers; i++) {
-        benchmark_overhead(&workers[i], 10000);
+        benchmark_overhead(transformer.safetensors, &workers[i], 1000);
     }
     printf("Client overhead benchmarks complete\n");
 
