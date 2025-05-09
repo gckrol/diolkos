@@ -175,9 +175,6 @@ float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations) {
     Tensor *matrix = m->layers[0].w1; // Largest matrix we have.
     const int slice_id = matrix->tensor_id;
     
-    printf("Benchmarking client overhead for worker %s:%d (%d iterations)...\n", 
-           worker->address, worker->port, iterations);
-    
     // Create dummy input data of reasonable size
     const size_t data_size = matrix->hdim;
     uint8_t dummy_data[data_size];
@@ -239,9 +236,44 @@ float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations) {
     }
     
     double avg_time_ns = total_time / iterations;
-    printf("Average client overhead: %.3f ns (%.3f ms) input size: %zu bytes, output size: %zu bytes)\n",
+    printf("Worker %s:%d: network overhead: %.3f ns (%.3f ms) input size: %zu bytes, output size: %zu bytes)\n",
+           worker->address, worker->port,
            avg_time_ns, avg_time_ns / 1e6, data_size, output_size);
     return (float)(avg_time_ns / 1e6); // Return value in milliseconds for compatibility
+}
+
+// Benchmark network latency using CMD_PING
+float benchmark_latency(RemoteWorker *worker, int iterations) {
+    struct timespec start, end;
+    double total_time = 0.0;
+    
+    for (int i = 0; i < iterations; i++) {
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        
+        // Send ping command
+        uint16_t command = CMD_PING;
+        write_full(worker->fd, &command, sizeof(command));
+        
+        // Wait for response (single byte)
+        uint8_t response = 0;
+        read_full(worker->fd, &response, sizeof(response));
+        
+        // Verify response
+        if (response != 0x01) {
+            fprintf(stderr, "Error: invalid ping response from worker: %d\n", response);
+            close(worker->fd);
+            exit(EXIT_FAILURE);
+        }
+        
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        double elapsed_ns = (end.tv_sec - start.tv_sec) * 1e9 + (end.tv_nsec - start.tv_nsec);
+        total_time += elapsed_ns;
+    }
+    
+    double avg_time_ns = total_time / iterations;
+    printf("Worker %s:%d: average round-trip latency: %.3f ns (%.3f ms)\n",
+           worker->address, worker->port, avg_time_ns / 1e6);
+    return (float)(avg_time_ns / 1e6); // Return value in milliseconds
 }
 
 Tensor* forward_remote(Transformer* transformer, int token, int pos) {
@@ -736,11 +768,10 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "Initialization took %ld ms\n", (end_time - start_time));
     
     // Benchmark client overhead for each worker
-    printf("Running client overhead benchmarks...\n");
     for (int i = 0; i < num_workers; i++) {
+        benchmark_latency(&workers[i], 1000);
         benchmark_overhead(transformer.safetensors, &workers[i], 1000);
     }
-    printf("Client overhead benchmarks complete\n");
 
     size_t total_params = print_transformer_info(&transformer);
 

@@ -297,6 +297,10 @@ int main(int argc, char *argv[]) {
                 multiply(client_fd, true);
             } else if (command == CMD_MULTIPLY_OVERHEAD) {
                 multiply(client_fd, false);
+            } else if (command == CMD_PING) {
+                // Simply send back a single byte for ping latency measurement
+                uint8_t response = 0x01;
+                write_full(client_fd, &response, sizeof(response));
             } else {
                 printf("Unknown command: %u\n", command);
                 break;
