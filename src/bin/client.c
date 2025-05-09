@@ -489,7 +489,7 @@ float generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
         long end = time_in_ms();
         int remote_matmuls = transformer->safetensors->config->n_layers * 7;
         tokens_per_second = (float)(pos - 1) * 1000.0f / (end - start);
-        fprintf(stderr, "Speed: %.2f tok/s,  %.2f ms/token %.2f ms/rpc\n", tokens_per_second, 1000.0f / tokens_per_second, 1000.0f / tokens_per_second / remote_matmuls);
+        fprintf(stderr, "Speed: %.2f tok/s,  %.3f ms/token %.3f ms/rpc\n", tokens_per_second, 1000.0f / tokens_per_second, 1000.0f / tokens_per_second / remote_matmuls);
     }
 
     free(prompt_tokens);

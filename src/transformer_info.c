@@ -181,7 +181,7 @@ size_t print_transformer_info(Transformer* transformer) {
                 bytes_per_param);
     }
     
-    fprintf(stderr, "Total parameters: %.2f M\n", (float)total_params / 1000000);
+    fprintf(stderr, "Total parameters: %.2f M, total layers: %d\n", (float)total_params / 1000000, p->n_layers);
     // Print memory usage summary
     fprintf(stderr, "Total memory: %.2f GB (runstate: %.2f MB, kv: %.2f GB, model: %.2f GB)\n\n",
             (float)(runstate_memory + kv_memory + model_memory) / 1024 / 1024 / 1024,

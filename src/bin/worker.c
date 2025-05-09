@@ -15,6 +15,7 @@
 #include "utils.h"
 #include "net.h"
 #include "fnv1a.h"
+#include "threading.h"
 
 // VS Code shows this as undefined.
 #ifndef CLOCK_MONOTONIC
@@ -189,7 +190,7 @@ void multiply(int client_fd, bool perform_matmul) {
     // printf("Output vector dim: %zu\n", s->output_vector->dim);
 
     if (perform_matmul) {
-        matmul(s->output_vector, s->input_vector, s->matrix, s->input_vector->dim, s->output_vector->dim);
+        matmul_parallel(s->output_vector, s->input_vector, s->matrix, s->input_vector->dim, s->output_vector->dim);
     }
     
     // printf("Writing %zu bytes\n", s->output_vector->dim * quant_size(s->output_vector->type));
@@ -208,6 +209,7 @@ void multiply(int client_fd, bool perform_matmul) {
 }
 
 int main(int argc, char *argv[]) {
+    init_threads();
     init_utils(4096*4, 0);
 
     slices = calloc(MAX_SLICES, sizeof(Slice));
