@@ -3,9 +3,12 @@
 #include "utils.h"
 #include <stdlib.h>
 #include <assert.h>
+#include "threading.h"
 
 static Tensor* input;
+static Tensor* input_q8;
 static Tensor* output;
+static Tensor* output_q8;
 static Tensor* matrix;
 
 static inline float fast_random(uint32_t *state) {
@@ -18,7 +21,9 @@ void benchmark_init(int input_size, int output_size, quant_t type) {
 
     size_t matrix_size = (size_t)input_size * output_size;
     input = tensor_create(input_size, F32);
+    input_q8 = tensor_create(input_size, Q8_0);
     output = tensor_create(output_size, F32);
+    output_q8 = tensor_create(output_size, Q8_0);
     matrix = tensor_create(matrix_size, type);
 
     // Fill the input and matrix.
@@ -26,6 +31,10 @@ void benchmark_init(int input_size, int output_size, quant_t type) {
     float *input_data = data_f32(input);
     for (int i = 0; i < input_size; i++) {
         input_data[i] = fast_random(&rng_state);
+    }
+    uint8_t *input_q8_data = data_i8(input_q8);
+    for (int i = 0; i < input_size + input_size/32*sizeof(float); i++) {
+        input_q8_data[i] = fast_random(&rng_state);
     }
     int8_t *matrix_data = data_i8(matrix);
     for (int i = 0; i < matrix_size; i++) {
@@ -45,4 +54,8 @@ void benchmark_destroy(void) {
 
 void benchmark_run(void) {
     matmul(output, input, matrix, input->dim, output->dim);
+}
+
+void benchmark_runp(void) {
+    matmul_parallel(output_q8, input_q8, matrix, input->dim, output->dim);
 }

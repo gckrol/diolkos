@@ -23,13 +23,14 @@ int main(int argc, char *argv[]) {
     int output_size = input_size;
     const int iterations = 400;
 
+    init_threads();
     init_utils(input_size, input_size);
 
     benchmark_init(input_size, output_size, Q8_0);
 
     // Warmup.
     for (int i=0;i<iterations/2;i++) {
-        benchmark_run();
+        benchmark_runp();
     }
 
     struct timespec start, end;
@@ -41,7 +42,7 @@ int main(int argc, char *argv[]) {
 
     clock_gettime(CLOCK_MONOTONIC, &start);  
     for (int i = 0; i < iterations; i++) {
-        benchmark_run();
+        benchmark_runp();
     }
     clock_gettime(CLOCK_MONOTONIC, &end);
     double elapsed_ms = (end.tv_sec - start.tv_sec) * 1000.0 +

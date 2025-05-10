@@ -52,6 +52,7 @@ void slice(Tensor *dest, Tensor *src, int start);
 float *data_f32(Tensor *tensor);
 int8_t *data_i8(Tensor *tensor);
 
+int group_size(quant_t type);
 int quant_size(quant_t type);
 
 size_t tensor_memory(Tensor *tensor);

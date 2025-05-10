@@ -3,6 +3,9 @@
 #include <math.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <sys/mman.h>
+#include <unistd.h>
+#include <assert.h>
 
 #include "tensor.h"
 
@@ -197,6 +200,8 @@ void convert_f32_q8_slice_into_offset(Tensor *dst, Tensor *input, size_t start, 
     assert(input->type == F32);
     assert(input->dim >= start+length);
     assert(dst->dim >= length);
+    assert(start % 32 == 0);
+    assert(length % 32 == 0);
     const int GS = 32;
     float Q_MAX = 127.0f;
 
@@ -240,16 +245,15 @@ void convert_q8_f32_slice_into_offset(Tensor *dst, Tensor *input, size_t start, 
     assert(input->type == Q8_0);
     assert(dst->type == F32);
     assert(input->dim >= start+length);
-    assert(dst->dim >= length);
+    assert(dst->dim >= length + offset);
 
     const int GS = 32;
 
     int8_t *input_data = data_i8(input) + start;
     float *output_data = data_f32(dst);
 
-    size_t i;
-    #pragma omp parallel for private(i)
-    for (i = 0; i < length; i += GS) {
+    #pragma omp parallel for
+    for (size_t i = 0; i < length; i += GS) {
         float max_val = input->scale[(start+i) / GS];
 
         #pragma omp simd

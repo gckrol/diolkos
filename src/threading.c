@@ -5,26 +5,29 @@
 #include <sched.h>      // For CPU_SET, CPU_ZERO, cpu_set_t
 #include <unistd.h>     // For sysconf
 #include <sched.h>
+#include <string.h>
 
 #include "tensor.h"
+#include "utils.h"
 
-#define NUM_THREADS 4
+int num_threads;
 
 typedef struct {
     Tensor* out_tensor;
     Tensor* in_tensor;
     Tensor* matrix;
     Tensor* temp_q8;
+    Tensor* temp_f32;
     int start_row;
     int end_row;
     int tid;
 } ThreadContext;
 
+ThreadContext *contexts = NULL;
+pthread_t *threads = NULL;
+
 pthread_barrier_t start_barrier;
 pthread_barrier_t end_barrier;
-
-ThreadContext contexts[NUM_THREADS];
-pthread_t threads[NUM_THREADS];
 
 void matmul_Q8_0_slice(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix, int in_dim, int out_dim, int start_row, int end_row) {
     // printf("matmul_Q8_0_slice: in: %zu xout: %zu in_dim: %d out_dim: %d start_row: %d end_row: %d\n", in_tensor->dim, out_tensor->dim, in_dim, out_dim, start_row, end_row);
@@ -52,8 +55,8 @@ void matmul_Q8_0_slice(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix, in
             // It's faster to do this right away, in this loop.
             // This might be because we can do the multiplication while waiting for memory.
             sum += ((float) ival) * w_scale[in / GS + j] * x_scale[j];
-        }        
-        xout_data[i] = sum;
+        }
+        xout_data[i-start_row] = sum;
     }
 }
 
@@ -68,6 +71,7 @@ void *worker_fn(void *arg) {
     struct sched_param param = { .sched_priority = 50 };
     if (pthread_setschedparam(pthread_self(), SCHED_FIFO, &param) != 0) {
         perror("pthread_setschedparam");
+        fprintf(stderr, "For optimal performance give CAP_SYS_NICE with: sudo setcap cap_sys_nice=eip <path to binary>\n");
     }
     
     if (pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset) != 0) {
@@ -77,12 +81,15 @@ void *worker_fn(void *arg) {
     while (1) {
         // Wait at barrier until work is available
         pthread_barrier_wait(&start_barrier);
-        
+
         // Do assigned chunk
-        convert_into(ctx->temp_q8, ctx->in_tensor);
-        matmul_Q8_0_slice(ctx->out_tensor, ctx->temp_q8, ctx->matrix, 
+        matmul_Q8_0_slice(ctx->temp_f32, ctx->in_tensor, ctx->matrix, 
                          ctx->in_tensor->dim, ctx->out_tensor->dim, 
                          ctx->start_row, ctx->end_row);
+
+        convert_f32_q8_slice_into_offset(ctx->out_tensor, ctx->temp_f32, 
+                                         0, ctx->end_row - ctx->start_row, 
+                                         ctx->start_row);
         
         // Wait at barrier until all threads complete
         pthread_barrier_wait(&end_barrier);
@@ -93,14 +100,14 @@ void *worker_fn(void *arg) {
 
 void matmul_parallel(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix, int in_dim, int out_dim) {
     // Set up work for all threads
-    for (int i = 0; i < NUM_THREADS; ++i) {
+    for (int i = 0; i < num_threads; ++i) {
         contexts[i].in_tensor = in_tensor;
         contexts[i].out_tensor = out_tensor;
         contexts[i].matrix = matrix;
-        float start = (float)i / NUM_THREADS;
-        float end = (float)(i + 1) / NUM_THREADS;
-        contexts[i].start_row = start * out_dim;
-        contexts[i].end_row = end * out_dim;
+        float start = (float)i / num_threads;
+        float end = (float)(i + 1) / num_threads;
+        contexts[i].start_row = round_down_32(start * out_dim);
+        contexts[i].end_row = round_down_32(end * out_dim);
     }
     
     // Trigger all threads to start working
@@ -111,12 +118,26 @@ void matmul_parallel(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix, int 
 }
 
 void init_threads() {
+    // Read OMP_NUM_THREADS from environment
+    char *env = getenv("OMP_NUM_THREADS");
+    num_threads = sysconf(_SC_NPROCESSORS_ONLN); // Default to number of processors
+    if (env && strlen(env) > 0) {
+        int n = atoi(env);
+        if (n > 0) num_threads = n;
+    }
+    printf("Using %d threads\n", num_threads);
+
+    // Allocate arrays based on num_threads
+    contexts = calloc(num_threads, sizeof(ThreadContext));
+    threads = calloc(num_threads, sizeof(pthread_t));
+
     // Initialize barriers
-    pthread_barrier_init(&start_barrier, NULL, NUM_THREADS + 1); // +1 for main thread
-    pthread_barrier_init(&end_barrier, NULL, NUM_THREADS + 1);   // +1 for main thread
+    pthread_barrier_init(&start_barrier, NULL, num_threads + 1); // +1 for main thread
+    pthread_barrier_init(&end_barrier, NULL, num_threads + 1);   // +1 for main thread
     
-    for (int i = 0; i < NUM_THREADS; ++i) {
+    for (int i = 0; i < num_threads; ++i) {
         contexts[i].temp_q8 = tensor_create(1024*100, Q8_0); // FIXME SIZE.
+        contexts[i].temp_f32 = tensor_create(1024*100, F32); // FIXME SIZE.
         contexts[i].tid = i;
         
         pthread_create(&threads[i], NULL, worker_fn, &contexts[i]);

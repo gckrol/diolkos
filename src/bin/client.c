@@ -24,6 +24,8 @@
 #include <assert.h>
 #include "net.h"
 #include "fnv1a.h"
+#include "utils.h"
+#include "tensor.h"
 
 // VS Code shows this as undefined.
 #ifndef CLOCK_MONOTONIC
@@ -46,9 +48,11 @@ static int max(int a, int b) {
 }
 
 static Tensor *temp_q8 = NULL;
+static Tensor *temp_q8_2 = NULL;
 static Tensor *temp_f32 = NULL;
 void init_temp(int dim, int hidden_dim) {
     temp_q8 = tensor_create(max(dim, hidden_dim), Q8_0);
+    temp_q8_2 = tensor_create(max(dim, hidden_dim), Q8_0);
     temp_f32 = tensor_create(max(dim, hidden_dim), F32);
 }
 
@@ -108,19 +112,21 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
         RemoteWorker *worker = &workers[w];
         // We get back a slice of a certain number of rows.
         assert(xoutt->type == F32);
-        uint32_t start_offset = (uint32_t)(xoutt->dim * worker->start); // Inclusive.
-        uint32_t end_offset = (uint32_t)(xoutt->dim * worker->end); // Exclusive.
-        // printf("Worker %d: start_offset: %u, end_offset: %u\n", w, start_offset, end_offset);
+        size_t start = round_down_32(xoutt->dim * worker->start);
+        size_t end = round_down_32(xoutt->dim * worker->end);
+        size_t length = end - start;
+    
+        // printf("Worker %d: start_offset: %u, end_offset: %u\n", w, start, end);
         
         // Read result data and end marker in a single system call
         uint32_t end_marker = 0;
         struct iovec iov[3];
         
         iov[0].iov_base = temp_q8->data;
-        iov[0].iov_len = (end_offset - start_offset) * sizeof(uint8_t);
+        iov[0].iov_len = length * sizeof(uint8_t);
 
         iov[1].iov_base = temp_q8->scale;
-        iov[1].iov_len = (end_offset - start_offset) / 32 * sizeof(float);
+        iov[1].iov_len = length / 32 * sizeof(float);
 
         iov[2].iov_base = &end_marker;
         iov[2].iov_len = sizeof(end_marker);
@@ -138,7 +144,7 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
         // TODO: keep the activations as q8 if possible.
         //printf("Dequantizing %zu bytes\n", (end_offset - start_offset) * sizeof(float));
         //convert_into(xoutt, temp_q8);
-        convert_q8_f32_slice_into_offset(xoutt, temp_q8, 0, end_offset - start_offset, start_offset);
+        convert_q8_f32_slice_into_offset(xoutt, temp_q8, 0, length, start);
     }
     // printf("matmul_remote done\n");
 
@@ -177,8 +183,8 @@ long time_in_ms(void) {
 }
 
 // Benchmark client overhead using CMD_MULTIPLY_OVERHEAD
-float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations) {
-    struct timespec start, end;
+float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations, bool perform_matmul) {
+    struct timespec starttime, endtime;
     double total_time = 0.0;
     Tensor *matrix = m->layers[0].w1; // Largest matrix we have.
     const int slice_id = matrix->tensor_id;
@@ -190,15 +196,18 @@ float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations) {
     memset(dummy_data, 0, data_size);
     memset(dummy_scale, 0, data_size / 32 * sizeof(float));
 
-    size_t output_size = (size_t)(matrix->vdim * worker->end) - (size_t)(matrix->vdim * worker->start);
+    size_t start = round_down_32(matrix->vdim * worker->start);
+    size_t end = round_down_32(matrix->vdim * worker->end);
+
+    size_t output_size = end - start;
     output_size += output_size / 32 * sizeof(float); // Scale
     
     for (int i = 0; i < iterations; i++) {
-        clock_gettime(CLOCK_MONOTONIC, &start);
+        clock_gettime(CLOCK_MONOTONIC, &starttime);
         
         // Send command using the same pattern as matmul_remote
         struct iovec iov[5];
-        uint16_t command = CMD_MULTIPLY_OVERHEAD;
+        uint16_t command = perform_matmul ? CMD_MULTIPLY : CMD_MULTIPLY_OVERHEAD;
         uint32_t end_marker = 0xCAFEF00D;
         
         iov[0].iov_base = &command;
@@ -221,7 +230,7 @@ float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations) {
         
         // Read back results (same pattern as matmul_remote)
         uint8_t dummy_output[output_size];
-        end_marker = 0;
+        end_marker = 1;
         
         struct iovec read_iov[2];
         read_iov[0].iov_base = dummy_output;
@@ -229,6 +238,8 @@ float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations) {
         
         read_iov[1].iov_base = &end_marker;
         read_iov[1].iov_len = sizeof(end_marker);
+
+        // printf("Reading %zu bytes\n", sizeof(dummy_output));
         
         readv_full(worker->fd, read_iov, 2);
         
@@ -239,8 +250,8 @@ float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations) {
             exit(EXIT_FAILURE);
         }
         
-        clock_gettime(CLOCK_MONOTONIC, &end);
-        double elapsed_ns = (end.tv_sec - start.tv_sec) * 1e9 + (end.tv_nsec - start.tv_nsec);
+        clock_gettime(CLOCK_MONOTONIC, &endtime);
+        double elapsed_ns = (endtime.tv_sec - starttime.tv_sec) * 1e9 + (endtime.tv_nsec - starttime.tv_nsec);
         total_time += elapsed_ns;
     }
     
@@ -550,8 +561,13 @@ void read_stdin(const char* guide, char* buffer, size_t bufsize) {
 }
 
 void send_slice(RemoteWorker *worker, int slice_id, Tensor *matrix) {
-    uint32_t start_offset = (uint32_t)(matrix->vdim * worker->start); // Inclusive.
-    uint32_t end_offset = (uint32_t)(matrix->vdim * worker->end); // Exclusive.
+    if (matrix->type != Q8_0) {
+        return; // We run these locally.
+    }
+
+    uint32_t start_offset = round_down_32(matrix->vdim * worker->start);
+    uint32_t end_offset = round_down_32(matrix->vdim * worker->end);
+    // printf("Sending slice %d to worker %s:%d, start: %u, end: %u vdim: %d start: %f end %f\n", slice_id, worker->address, worker->port, start_offset, end_offset, matrix->vdim, worker->start, worker->end);
 
     // send the slice id and input vector to the worker
     uint16_t command;
@@ -566,10 +582,12 @@ void send_slice(RemoteWorker *worker, int slice_id, Tensor *matrix) {
 
     u_int8_t *data_start = (uint8_t*)matrix->data + start_index_bytes;
     size_t data_size = end_index_bytes - start_index_bytes;
+    assert(data_size % 32 == 0);
     size_t scale_size_bytes = 0;
     if (matrix->type == Q8_0) {
         scale_size_bytes = (end_offset - start_offset) * matrix->hdim / group_size(matrix->type) * sizeof(float);
     }
+    // printf("Data size: %d\n", data_size);
     assert(data_start + data_size <= (uint8_t*)matrix->data + Tensor_storage_size(matrix));
 
     // Check if the worker perhaps has this data already.
@@ -699,25 +717,27 @@ int main(int argc, char *argv[]) {
     // Connect to the workers and upload their matrices.
 
     // Define the workers. TODO: load from config file, or have them register.
-    // num_workers = 2;
-    // workers = calloc(num_workers, sizeof(RemoteWorker));
-    // workers[0].address = "127.0.0.1";
-    // workers[0].port = 1234;
-    // workers[0].start = 0.0f;
-    // workers[0].end = 0.75f;
-    // if (num_workers > 1) {
-    //     workers[1].address = "192.168.178.12";
-    //     workers[1].port = 1234;
-    //     workers[1].start = 0.75f;
-    //     workers[1].end = 1.0f;
-    // }
-
-    num_workers = 1;
+    num_workers = 2;
     workers = calloc(num_workers, sizeof(RemoteWorker));
     workers[0].address = "127.0.0.1";
     workers[0].port = 1234;
     workers[0].start = 0.0f;
-    workers[0].end = 1.0f;
+    workers[0].end = 0.7f;
+    // workers[1].address = "127.0.0.1";
+    // workers[1].port = 1235;
+    // workers[1].start = 0.7f;
+    // workers[1].end = 1.0f;
+    workers[1].address = "192.168.178.12";
+    workers[1].port = 1234;
+    workers[1].start = 0.7f;
+    workers[1].end = 1.0f;
+
+    // num_workers = 1;
+    // workers = calloc(num_workers, sizeof(RemoteWorker));
+    // workers[0].address = "127.0.0.1";
+    // workers[0].port = 1234;
+    // workers[0].start = 0.0f;
+    // workers[0].end = 1.0f;
 
     // num_workers = 1;
     // workers = calloc(num_workers, sizeof(RemoteWorker));
@@ -725,6 +745,18 @@ int main(int argc, char *argv[]) {
     // workers[0].port = 1234;
     // workers[0].start = 0.0f;
     // workers[0].end = 1.0f;
+
+    // Verify start/end of all workers are consecutive
+    for (int i = 0; i < num_workers; i++) {
+        if (workers[i].start < 0.0f || workers[i].end > 1.0f) {
+            fprintf(stderr, "Worker %d: start/end must be in [0,1]\n", i);
+            exit(EXIT_FAILURE);
+        }
+        if (i > 0 && workers[i].start != workers[i - 1].end) {
+            fprintf(stderr, "Worker %d: start (%f) does not match previous worker end (%f)\n", i, workers[i].start, workers[i - 1].end);
+            exit(EXIT_FAILURE);
+        }
+    }
 
     // Connect to each of them.
     for (int i = 0; i < num_workers; i++) {
@@ -779,7 +811,8 @@ int main(int argc, char *argv[]) {
     // Benchmark client overhead for each worker
     for (int i = 0; i < num_workers; i++) {
         benchmark_latency(&workers[i], 1000);
-        benchmark_overhead(transformer.safetensors, &workers[i], 1000);
+        benchmark_overhead(transformer.safetensors, &workers[i], 1000, false);
+        benchmark_overhead(transformer.safetensors, &workers[i], 100, true);
     }
 
     size_t total_params = print_transformer_info(&transformer);

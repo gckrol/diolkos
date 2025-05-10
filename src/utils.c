@@ -3,6 +3,8 @@
 #include <stdbool.h>
 #include <string.h>
 #include <assert.h>
+#include <stdio.h>
+
 #include "tensor.h"
 
 bool reliable_isnan(double x) {
@@ -194,4 +196,8 @@ void matmul(Tensor* xoutt, Tensor* xt, Tensor* wt, int n, int d) {
     } else {
         assert(!"Unsupported type for matmul");
     }
+}
+
+size_t round_down_32(size_t i) {
+   return i - (i % 32);
 }

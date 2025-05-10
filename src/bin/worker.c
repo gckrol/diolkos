@@ -45,6 +45,9 @@ void load_matrix(int client_fd) {
     read_full(client_fd, &dim_out, sizeof(dim_out));
     read_full(client_fd, &hash, sizeof(hash));
 
+    assert(dim_in % 32 == 0);
+    assert(dim_out % 32 == 0);
+
     Slice *s = &slices[slice_id];
 
     size_t dim = (size_t)dim_in * (size_t)dim_out;
@@ -55,7 +58,7 @@ void load_matrix(int client_fd) {
 
     s->matrix = tensor_create(dim, type);
     s->input_vector = tensor_create(dim_in, Q8_0);
-    s->output_vector = tensor_create(dim_out, F32);
+    s->output_vector = tensor_create(dim_out, Q8_0);
 
     // printf("#%d %u x %u %s\n", slice_id, dim_in, dim_out, quant_t_to_string(type));
     // printf("Reading %zu bytes\n", Tensor_storage_size(s->matrix));
@@ -92,6 +95,11 @@ void load_matrix_hash(int client_fd) {
     read_full(client_fd, &dim_out, sizeof(dim_out));
     read_full(client_fd, &hash, sizeof(hash));
 
+    // printf("Loading matrix hash: %d %u x %u %s\n", slice_id, dim_in, dim_out, quant_t_to_string(type));
+
+    assert(dim_in % 32 == 0);
+    assert(dim_out % 32 == 0);
+
     Slice *s = &slices[slice_id];
 
     size_t dim = (size_t)dim_in * (size_t)dim_out;
@@ -101,7 +109,7 @@ void load_matrix_hash(int client_fd) {
     tensor_destroy(s->output_vector);
 
     s->input_vector = tensor_create(dim_in, Q8_0);
-    s->output_vector = tensor_create(dim_out, F32);
+    s->output_vector = tensor_create(dim_out, Q8_0);
 
     // Generate cache file name
     char cache_name[512];
@@ -162,6 +170,7 @@ void multiply(int client_fd, bool perform_matmul) {
     
     iov1[0].iov_base = s->input_vector->data;
     iov1[0].iov_len = Tensor_storage_size(s->input_vector);
+    assert(s->input_vector->dim % 32 == 0);
     
     iov1[1].iov_base = &end_marker;
     iov1[1].iov_len = sizeof(end_marker);
@@ -191,18 +200,20 @@ void multiply(int client_fd, bool perform_matmul) {
 
     if (perform_matmul) {
         matmul_parallel(s->output_vector, s->input_vector, s->matrix, s->input_vector->dim, s->output_vector->dim);
+    } else {
+        // Keep Valgrind happy.
+        memset(s->output_vector->data, 0, Tensor_storage_size(s->output_vector));
     }
     
-    Tensor *temp_q8 = convert_f32_q8(s->output_vector); // TODO don't allocate every time.
-
-    // printf("Writing %zu bytes\n", s->output_vector->dim * quant_size(s->output_vector->type));
     struct iovec iov[2];
     
-    iov[0].iov_base = temp_q8->data;
-    iov[0].iov_len = Tensor_storage_size(temp_q8);
+    iov[0].iov_base = s->output_vector->data;
+    iov[0].iov_len = Tensor_storage_size(s->output_vector);
     
     iov[1].iov_base = &end_marker;
     iov[1].iov_len = sizeof(end_marker);
+
+    // printf("Writing %zu bytes\n", Tensor_storage_size(s->output_vector));
     
     writev_full(client_fd, iov, 2);
 

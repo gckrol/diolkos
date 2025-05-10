@@ -2,9 +2,9 @@
 # example override to clang: make run CC=clang
 # Currently, gcc seems to be better at vectorizing.
 
-WARN = -Wall -Wextra -Wpedantic -Wstrict-prototypes -Wpointer-arith -Wcast-qual -Wwrite-strings
+WARN = -Wall -Wextra -Wpedantic -Wstrict-prototypes -Wpointer-arith -Wcast-qual -Wwrite-strings -Werror=implicit-function-declaration
 # CC = gcc $(WARN) -fopt-info-vec
-CC = clang $(WARN) -Wno-gnu-folding-constant -Rpass=loop-vectorize -fno-unroll-loops #  -Rpass-missed=loop-vectorize -Rpass-analysis=loop-vectorize
+CC = clang $(WARN) -Wno-gnu-folding-constant -fno-unroll-loops # -Rpass=loop-vectorize  -Rpass-missed=loop-vectorize -Rpass-analysis=loop-vectorize
 
 
 # Source files and object files
@@ -25,6 +25,10 @@ bin/%: obj/bin/omp/%.o $(OBJ_OMP)
 
 # No OMP for the worker - it uses pthreads.
 bin/worker: obj/bin/worker.o $(OBJ)
+	@mkdir -p bin
+	$(CC) $(OPT) $(INC) -g -o $@ $^ -lm
+
+bin/benchmarkp: obj/bin/benchmarkp.o $(OBJ)
 	@mkdir -p bin
 	$(CC) $(OPT) $(INC) -g -o $@ $^ -lm
 
