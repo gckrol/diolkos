@@ -32,6 +32,9 @@
 #define CLOCK_MONOTONIC 0
 #endif
 
+// Log file for performance metrics
+FILE* perf_log = NULL;
+
 typedef struct RemoteWorker {
     int fd;
     const char *address;
@@ -62,27 +65,32 @@ static double time_in_ms2(struct timespec *start, struct timespec *end) {
 }
 
 void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_dim) {
-    // printf("matmul_remote: in: %zu xout: %zu in_dim: %d out_dim: %d\n", xt->dim, xoutt->dim, in_dim, out_dim);
-    // printf("types in: %s xout: %s wt: %s\n", quant_t_to_string(xt->type), quant_t_to_string(xoutt->type), quant_t_to_string(wt->type));
-    struct timespec start, end;
-    clock_gettime(CLOCK_MONOTONIC, &start);
+    struct timespec overall_start, send_start, send_end, recv_start, recv_end, overall_end;
+    clock_gettime(CLOCK_MONOTONIC, &overall_start);
 
     assert(wt->type == Q8_0);
     assert(xt->type == F32);
     assert(xoutt->type == F32);
 
-    // printf("matmul_remote for matrix %d\n", wt->tensor_id);
-    // printf("input dim: %zu\n", xt->dim);
+    // Initialize arrays to track individual worker times (for debugging)
+    double worker_send_times[num_workers];
+    double worker_recv_times[num_workers];
+
     assert(wt->tensor_id > 0);
     convert_into(temp_q8, xt);
 
+    // Start timing the send phase
+    clock_gettime(CLOCK_MONOTONIC, &send_start);
+    
     // Send inputs.
-    for (int w=0;w<num_workers;w++) {
+    for (int w = 0; w < num_workers; w++) {
+        struct timespec worker_send_start, worker_send_end;
+        clock_gettime(CLOCK_MONOTONIC, &worker_send_start);
+        
         RemoteWorker *worker = &workers[w];
-        // printf("Worker %d: %s:%d, start: %f, end %f\n", w, worker->address, worker->port, worker->start, worker->end);
         
         // Prepare all data to be sent in a single writev call
-        struct iovec iov[5];  // Now including end marker
+        struct iovec iov[5];
         uint16_t command = CMD_MULTIPLY;
         uint32_t slice_id = wt->tensor_id;
         uint32_t end_marker = 0xCAFEF00D;
@@ -105,10 +113,23 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
         
         // Send all data in one system call
         writev_full(worker->fd, iov, 5);
+        
+        clock_gettime(CLOCK_MONOTONIC, &worker_send_end);
+        worker_send_times[w] = time_in_ms2(&worker_send_start, &worker_send_end);
     }
+    
+    // End timing the send phase
+    clock_gettime(CLOCK_MONOTONIC, &send_end);
+    double total_send_time = time_in_ms2(&send_start, &send_end);
+
+    // Start timing the receive phase
+    clock_gettime(CLOCK_MONOTONIC, &recv_start);
 
     // Read outputs.
-    for (int w=0;w<num_workers;w++) {
+    for (int w = 0; w < num_workers; w++) {
+        struct timespec worker_recv_start, worker_recv_end;
+        clock_gettime(CLOCK_MONOTONIC, &worker_recv_start);
+        
         RemoteWorker *worker = &workers[w];
         // We get back a slice of a certain number of rows.
         assert(xoutt->type == F32);
@@ -116,16 +137,16 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
         size_t end = round_down_32(xoutt->dim * worker->end);
         size_t length = end - start;
     
-        // printf("Worker %d: start_offset: %u, end_offset: %u\n", w, start, end);
+        Tensor *t = tensor_create(length, Q8_0);
         
         // Read result data and end marker in a single system call
         uint32_t end_marker = 0;
         struct iovec iov[3];
         
-        iov[0].iov_base = temp_q8->data;
+        iov[0].iov_base = t->data;
         iov[0].iov_len = length * sizeof(uint8_t);
 
-        iov[1].iov_base = temp_q8->scale;
+        iov[1].iov_base = t->scale;
         iov[1].iov_len = length / 32 * sizeof(float);
 
         iov[2].iov_base = &end_marker;
@@ -140,32 +161,36 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
             exit(EXIT_FAILURE);
         }
 
-        // Dequantize
-        // TODO: keep the activations as q8 if possible.
-        //printf("Dequantizing %zu bytes\n", (end_offset - start_offset) * sizeof(float));
-        //convert_into(xoutt, temp_q8);
-        convert_q8_f32_slice_into_offset(xoutt, temp_q8, 0, length, start);
+        convert_q8_f32_slice_into_offset(xoutt, t, 0, length, start);
+
+        tensor_destroy(t);
+        
+        clock_gettime(CLOCK_MONOTONIC, &worker_recv_end);
+        worker_recv_times[w] = time_in_ms2(&worker_recv_start, &worker_recv_end);
     }
-    // printf("matmul_remote done\n");
+    
+    // End timing the receive phase
+    clock_gettime(CLOCK_MONOTONIC, &recv_end);
+    double total_recv_time = time_in_ms2(&recv_start, &recv_end);
+    
+    clock_gettime(CLOCK_MONOTONIC, &overall_end);
+    double total_time = time_in_ms2(&overall_start, &overall_end);
 
-    // Verify that the output is correct.
-    // matmul(temp_f32, xt, wt, n, d);
-    // for (int i = 0; i < xoutt->dim; i++) {
-    //     float val = data_f32(temp_f32)[i];
-    //     float val2 = data_f32(xoutt)[i];
-    //     if (reliable_isnan(val) || reliable_isnan(val2)) {
-    //         printf("NaN at %d: %f != %f\n", i, val, val2);
-    //         assert(!"NaN in matmul_remote");
-    //     }
-    //     if (fabs(val - val2) > 1e-7) {
-    //         printf("Mismatch at %d: %f != %f\n", i, val, val2);
-    //         assert(!"Mismatch in matmul_remote");
-    //     }
-    //     data_f32(xoutt)[i] = val2; // Copy the correct value back to xoutt.
-    // }
+    // Calculate GMAC
+    double gmac = (double)wt->dim / 1e9 / (total_time / 1000.0);
 
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    // printf("Function took %.3f ms\n", time_in_ms2(&start, &end));
+    // Log performance data if log file is open
+    if (perf_log != NULL) {
+        fprintf(perf_log, "%d,", wt->tensor_id);
+        for (int w = 0; w < num_workers; w++) {
+            fprintf(perf_log, "%.3f,", worker_send_times[w]);
+        }
+        fprintf(perf_log, "%.3f,", total_send_time);
+        for (int w = 0; w < num_workers; w++) {
+            fprintf(perf_log, "%.3f,", worker_recv_times[w]);
+        }
+        fprintf(perf_log, "%.3f,%.3f,%d,%.3f\n", total_recv_time, total_time, wt->dim, gmac);
+    }
 }
 
 // ----------------------------------------------------------------------------
@@ -817,8 +842,35 @@ int main(int argc, char *argv[]) {
 
     size_t total_params = print_transformer_info(&transformer);
 
+    //////////////
+
+    // Initialize performance log file
+    perf_log = fopen("matmul_perf.csv", "w");
+    if (perf_log != NULL) {
+        // Write CSV header
+        fprintf(perf_log, "tensor_id,");
+        for (int i = 0; i < num_workers; i++) {
+            fprintf(perf_log, "worker%d_send_time,", i);
+        }
+        fprintf(perf_log, "total_send_time,");
+        for (int i = 0; i < num_workers; i++) {
+            fprintf(perf_log, "worker%d_recv_time,", i);
+        }
+        fprintf(perf_log, "total_recv_time,total_time,dim,gmac\n");
+    } else {
+        fprintf(stderr, "Warning: Failed to open performance log file\n");
+    }
+        
+    //////////////
+
     float tokens_per_second = generate(&transformer, &tokenizer, &sampler, prompt, steps);
     fprintf(stderr, "GMAC: %.1f\n", (double)tokens_per_second*total_params / 1000000000.0);
+
+    // Close the performance log file
+    if (perf_log != NULL) {
+        fclose(perf_log);
+        fprintf(stderr, "Performance log written to matmul_perf.csv\n");
+    }
 
     return 0;
 }

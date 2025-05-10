@@ -11,6 +11,7 @@
 # Profiling
 perf.data
 *.old
+*.csv*
 
 # VS Code
 /.vscode/
