@@ -40,13 +40,16 @@ static int max(int a, int b) {
     return (a > b) ? a : b;
 }
 
-static Tensor *temp_q8 = NULL;
-static Tensor *temp_q8_2 = NULL;
-static Tensor *temp_f32 = NULL;
+static int num_temp = 3;
+static Tensor **temp_q8 = NULL;
+static Tensor **temp_f32 = NULL;
 void init_temp(int dim, int hidden_dim) {
-    temp_q8 = tensor_create(max(dim, hidden_dim), Q8_0);
-    temp_q8_2 = tensor_create(max(dim, hidden_dim), Q8_0);
-    temp_f32 = tensor_create(max(dim, hidden_dim), F32);
+    temp_q8 = malloc(num_temp * sizeof(Tensor*));
+    temp_f32 = malloc(num_temp * sizeof(Tensor*));
+    for (int i = 0; i < num_temp; i++) {
+        temp_q8[i] = tensor_create(max(dim, hidden_dim), Q8_0);
+        temp_f32[i] = tensor_create(max(dim, hidden_dim), F32);
+    }
 }
 
 static double time_in_ms2(struct timespec *start, struct timespec *end) {
@@ -54,21 +57,29 @@ static double time_in_ms2(struct timespec *start, struct timespec *end) {
            (end->tv_nsec - start->tv_nsec) / 1e6;
 }
 
-void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_dim) {
+void remote_command(int step_id, Commands command, Tensor** out, int num_out, Tensor** in, int num_in, Tensor** matrix, int num_matrix) {
     struct timespec overall_start, send_start, send_end, recv_start, recv_end, overall_end;
     clock_gettime(CLOCK_MONOTONIC, &overall_start);
 
-    assert(wt->type == Q8_0);
-    assert(xt->type == F32);
-    assert(xoutt->type == F32);
+    for (int i=0;i<num_in;i++) {
+        assert(in[i]->type == F32);
+    }
+    for (int i=0;i<num_matrix;i++) {
+        assert(matrix[i]->tensor_id > 0);
+        assert(matrix[i]->type == Q8_0);
+    }
+    for (int i=0;i<num_out;i++) {
+        assert(out[i]->type == F32);
+    }
 
     // Initialize arrays to track individual worker times (for debugging)
     double worker_send_times[num_workers];
     double worker_recv_times[num_workers];
     double worker_deq_times[num_workers];
 
-    assert(wt->tensor_id > 0);
-    convert_into(temp_q8, xt);
+    for (int i=0;i<num_in;i++) {
+        convert_into(temp_q8[i], in[i]);
+    }
 
     // Start timing the send phase
     clock_gettime(CLOCK_MONOTONIC, &send_start);
@@ -81,29 +92,36 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
         RemoteWorker *worker = &workers[w];
         
         // Prepare all data to be sent in a single writev call
-        struct iovec iov[5];
+        int num_entries = 1 + num_matrix + num_in*2 + 1;
+        struct iovec iov[num_entries];
         uint16_t command = CMD_MULTIPLY;
-        uint32_t slice_id = wt->tensor_id;
         uint32_t end_marker = 0xCAFEF00D;
-        size_t data_size = xt->dim;
+        int c = 0;
         
-        iov[0].iov_base = &command;
-        iov[0].iov_len = sizeof(command);
+        iov[c].iov_base = &command;
+        iov[c++].iov_len = sizeof(command);
+
+        for (int i=0;i<num_matrix;i++) {
+            iov[c].iov_base = &matrix[i]->tensor_id;
+            iov[c++].iov_len = sizeof(uint32_t);
+        }
         
-        iov[1].iov_base = &slice_id;
-        iov[1].iov_len = sizeof(slice_id);
-        
-        iov[2].iov_base = temp_q8->data;
-        iov[2].iov_len = data_size;
-        
-        iov[3].iov_base = temp_q8->scale;
-        iov[3].iov_len = data_size / 32 * sizeof(float);
-        
-        iov[4].iov_base = &end_marker;
-        iov[4].iov_len = sizeof(end_marker);
+        for (int i=0;i<num_in;i++) {
+            size_t data_size = in[i]->dim;
+            iov[c].iov_base = temp_q8[i]->data;
+            iov[c++].iov_len = data_size;
+            
+            iov[c].iov_base = temp_q8[i]->scale;
+            iov[c++].iov_len = data_size / 32 * sizeof(float);
+        }
+       
+        iov[c].iov_base = &end_marker;
+        iov[c++].iov_len = sizeof(end_marker);
+
+        assert(c == num_entries);
         
         // Send all data in one system call
-        writev_full(worker->fd, iov, 5);
+        writev_full(worker->fd, iov, num_entries);
         
         clock_gettime(CLOCK_MONOTONIC, &worker_send_end);
         worker_send_times[w] = time_in_ms2(&worker_send_start, &worker_send_end);
@@ -122,28 +140,35 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
         clock_gettime(CLOCK_MONOTONIC, &worker_recv_start);
         
         RemoteWorker *worker = &workers[w];
-        // We get back a slice of a certain number of rows.
-        assert(xoutt->type == F32);
-        size_t start = round_down_32(xoutt->dim * worker->start);
-        size_t end = round_down_32(xoutt->dim * worker->end);
-        size_t length = end - start;
-    
-        Tensor *t = tensor_create(length, Q8_0);
-        
+
         // Read result data and end marker in a single system call
-        uint32_t end_marker = 0;
-        struct iovec iov[3];
-        
-        iov[0].iov_base = t->data;
-        iov[0].iov_len = length * sizeof(uint8_t);
+        int num_entries = num_out*2+1;
+        struct iovec iov[num_entries];
+        int c = 0;
 
-        iov[1].iov_base = t->scale;
-        iov[1].iov_len = length / 32 * sizeof(float);
+        Tensor *t[num_out];
 
-        iov[2].iov_base = &end_marker;
-        iov[2].iov_len = sizeof(end_marker);
+        for (int i=0;i<num_out;i++) {
+            size_t start = round_down_32(out[i]->dim * worker->start);
+            size_t end = round_down_32(out[i]->dim * worker->end);
+            size_t length = end - start;
+
+            t[i] = tensor_create(length, Q8_0); // TODO: don't allocate, use temp_q8[i] (if big enough)
+
+            iov[c].iov_base = t[i]->data;
+            iov[c++].iov_len = length * sizeof(uint8_t);
+    
+            iov[c].iov_base = t[i]->scale;
+            iov[c++].iov_len = length / 32 * sizeof(float);
+        }
+            
+        uint32_t end_marker = 1;
+        iov[c].iov_base = &end_marker;
+        iov[c++].iov_len = sizeof(end_marker);
+
+        assert(c == num_entries);
         
-        readv_full(worker->fd, iov, 3);
+        readv_full(worker->fd, iov, num_entries);
         
         // Verify the end marker
         if (end_marker != 0xCAFEF00D) {
@@ -155,9 +180,15 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
         clock_gettime(CLOCK_MONOTONIC, &worker_recv_end);
         worker_recv_times[w] = time_in_ms2(&worker_recv_start, &worker_recv_end);
 
-        convert_q8_f32_slice_into_offset(xoutt, t, 0, length, start);
+        for (int i=0;i<num_out;i++) {
+            size_t start = round_down_32(out[i]->dim * worker->start);
+            size_t end = round_down_32(out[i]->dim * worker->end);
+            size_t length = end - start;
 
-        tensor_destroy(t);
+            convert_q8_f32_slice_into_offset(out[i], t[i], 0, length, start);
+
+            tensor_destroy(t[i]);
+        }
 
         clock_gettime(CLOCK_MONOTONIC, &worker_deq_end);
         worker_deq_times[w] = time_in_ms2(&worker_recv_end, &worker_deq_end);
@@ -171,11 +202,14 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
     double total_time = time_in_ms2(&overall_start, &overall_end);
 
     // Calculate GMAC
-    double gmac = (double)wt->dim / 1e9 / (total_time / 1000.0);
+    double gmac = 0.0;
+    for (int i=0;i<num_matrix;i++) {
+        gmac += (double)matrix[i]->dim / 1e9 / (total_time / 1000.0);
+    }
 
     // Log performance data if log file is open
     if (perf_log != NULL) {
-        fprintf(perf_log, "%d,", wt->tensor_id);
+        fprintf(perf_log, "%d,", step_id);
         for (int w = 0; w < num_workers; w++) {
             fprintf(perf_log, "%.3f,", worker_send_times[w]);
         }
@@ -186,8 +220,12 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
         for (int w = 0; w < num_workers; w++) {
             fprintf(perf_log, "%.3f,", worker_deq_times[w]);
         }
-        fprintf(perf_log, "%.3f,%.3f,%d,%.3f\n", total_recv_time, total_time, wt->dim, gmac);
+        fprintf(perf_log, "%.3f,%.3f,%d,%.3f\n", total_recv_time, total_time, 0, gmac);
     }
+}
+
+void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_dim) {
+    remote_command(wt->tensor_id, CMD_MULTIPLY, &xoutt, 1, &xt, 1, &wt, 1);
 }
 
 // ----------------------------------------------------------------------------
