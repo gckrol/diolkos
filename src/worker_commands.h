@@ -1,8 +1,14 @@
+#ifndef WORKER_COMMANDS_H
+#define WORKER_COMMANDS_H
+
 typedef enum Commands {
     CMD_NONE = 0,
     CMD_LOAD_MATRIX,
     CMD_LOAD_MATRIX_HASH,
     CMD_MULTIPLY,
+    CMD_MULTIPLY_QKV,
     CMD_MULTIPLY_OVERHEAD,
     CMD_PING,
 } Commands;
+
+#endif // WORKER_COMMANDS_H

@@ -58,6 +58,7 @@ static double time_in_ms2(struct timespec *start, struct timespec *end) {
 }
 
 void remote_command(int step_id, Commands command, Tensor** out, int num_out, Tensor** in, int num_in, Tensor** matrix, int num_matrix) {
+    // printf("remote_command: %d %d %d %d %d\n", step_id, command, num_out, num_in, num_matrix);
     struct timespec overall_start, send_start, send_end, recv_start, recv_end, overall_end;
     clock_gettime(CLOCK_MONOTONIC, &overall_start);
 
@@ -94,15 +95,16 @@ void remote_command(int step_id, Commands command, Tensor** out, int num_out, Te
         // Prepare all data to be sent in a single writev call
         int num_entries = 1 + num_matrix + num_in*2 + 1;
         struct iovec iov[num_entries];
-        uint16_t command = CMD_MULTIPLY;
         uint32_t end_marker = 0xCAFEF00D;
         int c = 0;
         
-        iov[c].iov_base = &command;
-        iov[c++].iov_len = sizeof(command);
+        uint16_t com = command;
+        iov[c].iov_base = &com;
+        iov[c++].iov_len = sizeof(com);
 
         for (int i=0;i<num_matrix;i++) {
             iov[c].iov_base = &matrix[i]->tensor_id;
+            // fprintf(stderr, "Sending matrix %d\n", matrix[i]->tensor_id);
             iov[c++].iov_len = sizeof(uint32_t);
         }
         
@@ -387,9 +389,12 @@ Tensor* forward_remote(Transformer* transformer, int token, int pos) {
         int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
 
         // qkv matmuls for this position
-        matmul_remote(s->q, s->xb, layer->wq, dim, attention_dim);
-        matmul_remote(s->k, s->xb, layer->wk, dim, kv_dim);
-        matmul_remote(s->v, s->xb, layer->wv, dim, kv_dim);
+        // matmul_remote(s->q, s->xb, layer->wq, dim, attention_dim);
+        // matmul_remote(s->k, s->xb, layer->wk, dim, kv_dim);
+        // matmul_remote(s->v, s->xb, layer->wv, dim, kv_dim);
+        Tensor *qkv[3] = {s->q, s->k, s->v};
+        Tensor *w[3] = {layer->wq, layer->wk, layer->wv};
+        remote_command(layer->wq->tensor_id, CMD_MULTIPLY_QKV, qkv, 3, &s->xb, 1, w, 3);
 
         if (st->huggingface_rope) {
             // RoPE relative positional encoding: using complex number rotation like in lm.rs
@@ -694,7 +699,7 @@ void send_slice(RemoteWorker *worker, int slice_id, Tensor *matrix) {
         write_full(worker->fd, scale_start, scale_size_bytes);
         bytes_sent += scale_size_bytes;
     }
-    printf("Sent %zu bytes for slice %d Hash: %016llx%016llx\n", bytes_sent, slice_id, hash.high, hash.low);
+    printf("Sent %zu bytes for slice %d Hash: %016lx%016lx\n", bytes_sent, slice_id, hash.high, hash.low);
 
     write_end_marker(worker->fd);
 

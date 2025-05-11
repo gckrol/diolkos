@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -154,6 +155,50 @@ static double time_in_ms2(struct timespec *start, struct timespec *end) {
            (end->tv_nsec - start->tv_nsec) / 1e6;
 }
 
+void read_tensors(int client_fd, Tensor **vector, int num_vectors) {
+    int entries = num_vectors + 1;
+    struct iovec iov[entries];
+    int c = 0;
+
+    for (int i = 0; i < num_vectors; i++) {
+        iov[c].iov_base = vector[i]->data;
+        iov[c++].iov_len = Tensor_storage_size(vector[i]);
+    }
+
+    uint32_t end_marker = 1;
+    iov[c].iov_base = &end_marker;
+    iov[c++].iov_len = sizeof(end_marker);
+
+    assert(c == entries);
+    readv_full(client_fd, iov, entries);
+
+    // Verify the end marker
+    if (end_marker != 0xCAFEF00D) {
+        fprintf(stderr, "Error: expected end marker 0xCAFEF00D, got 0x%X\n",
+                end_marker);
+        close(client_fd);
+        exit(EXIT_FAILURE);
+    }
+}
+
+void write_tensors(int client_fd, Tensor **vector, int num_vectors) {
+    int entries = num_vectors + 1;
+    struct iovec iov[entries];
+    int c = 0;
+
+    for (int i = 0; i < num_vectors; i++) {
+        iov[c].iov_base = vector[i]->data;
+        iov[c++].iov_len = Tensor_storage_size(vector[i]);
+    }
+
+    uint32_t end_marker = 0xCAFEF00D;
+    iov[c].iov_base = &end_marker;
+    iov[c++].iov_len = sizeof(end_marker);
+
+    assert(c == entries);
+    writev_full(client_fd, iov, entries);
+}
+
 void multiply(int client_fd, bool perform_matmul) {
     struct timespec start, end;
     clock_gettime(CLOCK_MONOTONIC, &start);
@@ -165,24 +210,9 @@ void multiply(int client_fd, bool perform_matmul) {
     // printf("Input vector type: %s\n", quant_t_to_string(s->input_vector->type));
     // printf("Input vector dim: %zu\n", s->input_vector->dim);
     // printf("Reading %zu bytes\n", Tensor_storage_size(s->input_vector));
-    struct iovec iov1[2];
-    uint32_t end_marker = 0;
-    
-    iov1[0].iov_base = s->input_vector->data;
-    iov1[0].iov_len = Tensor_storage_size(s->input_vector);
-    assert(s->input_vector->dim % 32 == 0);
-    
-    iov1[1].iov_base = &end_marker;
-    iov1[1].iov_len = sizeof(end_marker);
-    
-    readv_full(client_fd, iov1, 2);
-    
-    // Verify the end marker
-    if (end_marker != 0xCAFEF00D) {
-        fprintf(stderr, "Error: expected end marker 0xCAFEF00D, got 0x%X\n", end_marker);
-        close(client_fd);
-        exit(EXIT_FAILURE);
-    }
+
+    // Read using the read_vectors function
+    read_tensors(client_fd, &s->input_vector, 1);
 
     // printf("Input vector type: %s\n", quant_t_to_string(s->input_vector->type));
     // for (int i = 0; i < s->input_vector->dim / 32; i++) {
@@ -204,22 +234,37 @@ void multiply(int client_fd, bool perform_matmul) {
         // Keep Valgrind happy.
         memset(s->output_vector->data, 0, Tensor_storage_size(s->output_vector));
     }
-    
-    struct iovec iov[2];
-    
-    iov[0].iov_base = s->output_vector->data;
-    iov[0].iov_len = Tensor_storage_size(s->output_vector);
-    
-    iov[1].iov_base = &end_marker;
-    iov[1].iov_len = sizeof(end_marker);
 
-    // printf("Writing %zu bytes\n", Tensor_storage_size(s->output_vector));
-    
-    writev_full(client_fd, iov, 2);
-
+    write_tensors(client_fd, &s->output_vector, 1);
 
     clock_gettime(CLOCK_MONOTONIC, &end);
     // printf("Function took %.3f ms\n", time_in_ms2(&start, &end));    
+}
+
+void multiply_qkv(int client_fd) {
+    // For this one we get 3 matrix ids, and 1 input vector.
+    uint32_t slice_ids[3];
+    read_full(client_fd, slice_ids, sizeof(slice_ids));
+
+    Tensor *input_vector;
+    // Borrow the input vector from the first slice.
+    input_vector = slices[slice_ids[0]].input_vector;
+
+    // Read using the read_vectors function
+    read_tensors(client_fd, &input_vector, 1);
+
+    Tensor *output_vectors[3];
+    for (int i = 0; i < 3; i++) {
+        output_vectors[i] = slices[slice_ids[i]].output_vector;
+    }
+
+    for (int i = 0; i < 3; i++) {
+        Tensor *matrix = slices[slice_ids[i]].matrix;
+        Tensor *output_vector = output_vectors[i];
+        matmul_parallel(output_vector, input_vector, matrix, input_vector->dim, output_vector->dim);
+    }
+
+    write_tensors(client_fd, output_vectors, 3);
 }
 
 int main(int argc, char *argv[]) {
@@ -302,7 +347,7 @@ int main(int argc, char *argv[]) {
             uint16_t command;
             ssize_t bytes_read = read(client_fd, &command, sizeof(command));
             if (bytes_read <= 0) {
-                printf("Reading command failed\n");
+                printf("Client disconnected\n");
                 break;
             }
             // printf("Received command: %u\n", command);
@@ -312,6 +357,8 @@ int main(int argc, char *argv[]) {
                 load_matrix_hash(client_fd);
             } else if (command == CMD_MULTIPLY) {
                 multiply(client_fd, true);
+            } else if (command == CMD_MULTIPLY_QKV) {
+                multiply_qkv(client_fd);
             } else if (command == CMD_MULTIPLY_OVERHEAD) {
                 multiply(client_fd, false);
             } else if (command == CMD_PING) {

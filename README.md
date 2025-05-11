@@ -82,6 +82,15 @@ make all
 bin/client models/Llama-2-7b-chat-hf -i "It was a dark and stormy night" -n 100
 ````
 
+## Development
+
+It's recommended to use `clangd`. `bear` will generate `compile_commands.json` that allow it to function.
+
+````bash
+sudo apt install clang libomp-dev bear
+make compile_commands
+````
+
 ## License
 
 BoardMind is licensed AGPLv3. Note that the original llama2.c is licensed MIT.

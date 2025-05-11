@@ -9,7 +9,10 @@ size_t read_full(int fd, void *buf, size_t count) {
     size_t bytes_read = 0;
     while (bytes_read < count) {
         size_t r = read(fd, (char*)buf + bytes_read, count - bytes_read);
-        if (r <= 0) return r; // error or EOF
+        if (r <= 0) {
+            fprintf(stderr, "Error: read failed. Read %zu bytes of %zu\n", bytes_read, count);
+            return r;
+        }
         bytes_read += r;
     }
     return bytes_read;
