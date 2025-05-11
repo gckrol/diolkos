@@ -15,6 +15,10 @@ OPT_OMP = -Ofast -march=native -flto -fopenmp #-fopenmp-simd # -fopt-info-vec-mi
 OPT = -Ofast -march=native -flto -fopenmp-simd -pthread # -fopt-info-vec-missed # -fopenmp # -fopt-info-vec-missed
 INC = -Isrc
 
+.PHONY: compile_commands
+compile_commands:
+	bear make clean all
+
 .PHONY: all
 all: bin/plainllm bin/stest bin/worker bin/client bin/benchmark
 
