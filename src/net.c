@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <sys/uio.h>
+#include <assert.h>
 
 size_t read_full(int fd, void *buf, size_t count) {
     size_t bytes_read = 0;
@@ -79,12 +80,13 @@ void read_end_marker(int client_fd) {
     uint32_t end = 0;
     if (read_full(client_fd, &end, sizeof(end)) != sizeof(end)) {
         fprintf(stderr, "Error: failed to read end marker\n");
-        close(client_fd);
+        assert(!"missing end marker");
         exit(EXIT_FAILURE);
+        
     }
     if (end != 0xCAFEF00D) {
         fprintf(stderr, "Error: expected end marker 0xCAFEF00D, got 0x%X\n", end);
-        close(client_fd);
+        assert(!"missing end marker");
         exit(EXIT_FAILURE);
     }
 }

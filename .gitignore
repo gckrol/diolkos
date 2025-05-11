@@ -16,8 +16,9 @@ perf.data
 *.old
 *.csv*
 
-# VS Code
+# VS Code / clangd
 /.vscode/
+.clangd
 
 # Python
 __pycache__/

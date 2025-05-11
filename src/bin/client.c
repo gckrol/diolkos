@@ -104,7 +104,6 @@ void remote_command(int step_id, Commands command, Tensor** out, int num_out, Te
 
         for (int i=0;i<num_matrix;i++) {
             iov[c].iov_base = &matrix[i]->tensor_id;
-            // fprintf(stderr, "Sending matrix %d\n", matrix[i]->tensor_id);
             iov[c++].iov_len = sizeof(uint32_t);
         }
         
@@ -175,7 +174,7 @@ void remote_command(int step_id, Commands command, Tensor** out, int num_out, Te
         // Verify the end marker
         if (end_marker != 0xCAFEF00D) {
             fprintf(stderr, "Error: expected end marker 0xCAFEF00D, got 0x%X\n", end_marker);
-            close(worker->fd);
+            assert(!"missing end marker");
             exit(EXIT_FAILURE);
         }
 
@@ -308,7 +307,7 @@ float benchmark_overhead(Model *m, RemoteWorker *worker, int iterations, bool pe
         // Verify the end marker
         if (end_marker != 0xCAFEF00D) {
             fprintf(stderr, "Error: expected end marker 0xCAFEF00D, got 0x%X\n", end_marker);
-            close(worker->fd);
+            assert(!"missing end marker");
             exit(EXIT_FAILURE);
         }
         
@@ -516,8 +515,10 @@ Tensor* forward_remote(Transformer* transformer, int token, int pos) {
         rmsnorm(s->xb, x, layer->rms_ffn_weight, dim);
 
         // FFN non-linearity
-        Tensor *matrices[3] = {layer->w1, layer->w2, layer->w3};
-        remote_command(layer->w1->tensor_id, CMD_FFN_SILU, &s->xb, 1, &s->xb, 1, matrices, 3);
+        Tensor *matrices[2] = {layer->w1, layer->w3};
+        remote_command(layer->w1->tensor_id, CMD_FFN_SILU, &s->hb, 1, &s->xb, 1, matrices, 2);
+
+        matmul_remote(s->xb, s->hb, layer->w2, hidden_dim, dim);
 
         // residual connection
         for (int i = 0; i < dim; i++) {
@@ -764,39 +765,40 @@ int main(int argc, char *argv[]) {
     // Connect to the workers and upload their matrices.
 
     // Define the workers. TODO: load from config file, or have them register.
-    // num_workers = 2;
-    // workers = calloc(num_workers, sizeof(RemoteWorker));
-    // // workers[0].address = "127.0.0.1";
-    // // workers[0].port = 1234;
-    // // workers[0].start = 0.0f;
-    // // workers[0].end = 0.7f;
-    // // workers[1].address = "127.0.0.1";
-    // // workers[1].port = 1235;
-    // // workers[1].start = 0.7f;
-    // // workers[1].end = 1.0f;
+    num_workers = 2;
+    workers = calloc(num_workers, sizeof(RemoteWorker));
+    workers[0].address = "127.0.0.1";
+    workers[0].port = 1234;
+    workers[0].start = 0.0f;
+    workers[0].end = 0.5f;
+    workers[1].address = "127.0.0.1";
+    workers[1].port = 1235;
+    workers[1].start = 0.5f;
+    workers[1].end = 1.0f;
+
     // // workers[1].address = "192.168.178.12";
 
     // workers[1].address = "192.168.178.12";
     // // workers[0].address = "192.168.178.36";
     // workers[1].port = 1234;
     // workers[1].start = 0.0f;
-    // workers[1].end = 0.45f;
+    // workers[1].end = 0.4f;
 
     // workers[0].address = "192.168.178.36";
     // workers[0].port = 1234;
-    // workers[0].start = 0.45f;
+    // workers[0].start = 0.4f;
     // workers[0].end = 1.0f;
-
-    num_workers = 1;
-    workers = calloc(num_workers, sizeof(RemoteWorker));
-    workers[0].address = "127.0.0.1";
-    workers[0].port = 1234;
-    workers[0].start = 0.0f;
-    workers[0].end = 1.0f;
 
     // num_workers = 1;
     // workers = calloc(num_workers, sizeof(RemoteWorker));
-    // workers[0].address = "192.168.178.12";
+    // workers[0].address = "127.0.0.1";
+    // workers[0].port = 1234;
+    // workers[0].start = 0.0f;
+    // workers[0].end = 1.0f;
+
+    // num_workers = 1;
+    // workers = calloc(num_workers, sizeof(RemoteWorker));
+    // workers[0].address = "192.168.178.36";
     // workers[0].port = 1234;
     // workers[0].start = 0.0f;
     // workers[0].end = 1.0f;

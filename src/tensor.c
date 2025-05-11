@@ -8,6 +8,7 @@
 #include <assert.h>
 
 #include "tensor.h"
+#include "utils.h"
 
 float bf16_to_float(uint16_t bf16) {
     // BF16 has the same exponent bits as FP32 but only the top 7 mantissa bits
@@ -438,4 +439,30 @@ const char* quant_t_to_string(quant_t type) {
         default: assert(!"unknown type");
     }
     __builtin_unreachable();
+}
+
+void tensor_validate(Tensor *tensor) {
+    assert(tensor->data != NULL);
+    assert(tensor->dim > 0);
+    assert(tensor->type == F32 || tensor->type == F16 || tensor->type == BF16 || tensor->type == Q8_0);
+    assert(tensor->scale != NULL || tensor->type != Q8_0);
+    if (tensor->type == Q8_0) {
+        assert(tensor->dim % group_size(tensor->type) == 0);
+        assert(tensor->scale != NULL);
+        for (size_t i = 0; i < tensor->dim / group_size(tensor->type); i++) {
+            assert(!reliable_isnan(tensor->scale[i]));
+        }
+    } else if (tensor->type == F32) {
+        for (int i = 0; i < tensor->dim; i++) {
+            assert(!reliable_isnan(data_f32(tensor)[i]));
+        }
+    } else if (tensor->type == F16) {
+        for (int i = 0; i < tensor->dim; i++) {
+                assert(!reliable_isnan(get_f16(tensor, i)));
+            }
+        } else if (tensor->type == BF16) {
+            for (int i = 0; i < tensor->dim; i++) {
+                assert(!reliable_isnan(get_bf16(tensor, i)));
+            }
+        }
 }

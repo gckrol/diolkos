@@ -177,7 +177,7 @@ void read_tensors(int client_fd, Tensor **vector, int num_vectors) {
     if (end_marker != 0xCAFEF00D) {
         fprintf(stderr, "Error: expected end marker 0xCAFEF00D, got 0x%X\n",
                 end_marker);
-        close(client_fd);
+        assert(!"missing end marker");
         exit(EXIT_FAILURE);
     }
 }
@@ -270,12 +270,11 @@ void multiply_qkv(int client_fd) {
 
 void ffn_silu(int client_fd) {
     // 1 input, 1 output, 3 matrices.
-    uint32_t slice_ids[3];
+    uint32_t slice_ids[2];
     read_full(client_fd, slice_ids, sizeof(slice_ids));
 
     Slice *s1 = &slices[slice_ids[0]];
-    Slice *s2 = &slices[slice_ids[1]];
-    Slice *s3 = &slices[slice_ids[2]];
+    Slice *s3 = &slices[slice_ids[1]];
 
     read_tensors(client_fd, &s1->input_vector, 1);
 
@@ -298,13 +297,13 @@ void ffn_silu(int client_fd) {
         val *= hb2_data[i];
         hb_data[i] = val;
     }
+    tensor_validate(hb);
 
     // Quantize.
-    convert_into(s2->input_vector, hb);
+    assert(s1->output_vector->dim == hb->dim);
+    convert_into(s1->output_vector, hb);
 
-    matmul_parallel(s2->output_vector, s2->input_vector, s2->matrix);
-
-    write_tensors(client_fd, &s2->output_vector, 1);
+    write_tensors(client_fd, &s1->output_vector, 1);
 
     tensor_destroy(hb);
     tensor_destroy(hb2);

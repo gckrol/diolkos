@@ -33,6 +33,7 @@ float f16_to_float(uint16_t f16);
 Tensor *tensor_create(size_t size, quant_t type);
 void tensor_destroy(Tensor *tensor);
 size_t Tensor_storage_size(Tensor *tensor);
+void tensor_validate(Tensor *tensor);
 
 Tensor *convert(Tensor *input, quant_t type);
 void convert_into(Tensor *dst, Tensor *input);
