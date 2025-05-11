@@ -9,6 +9,7 @@ typedef enum Commands {
     CMD_MULTIPLY_QKV,
     CMD_MULTIPLY_OVERHEAD,
     CMD_PING,
+    CMD_FFN_SILU,
 } Commands;
 
 #endif // WORKER_COMMANDS_H

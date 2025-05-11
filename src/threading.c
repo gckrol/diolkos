@@ -21,6 +21,7 @@ typedef struct {
     int start_row;
     int end_row;
     int tid;
+    bool quantize;
 } ThreadContext;
 
 ThreadContext *contexts = NULL;
@@ -29,7 +30,7 @@ pthread_t *threads = NULL;
 pthread_barrier_t start_barrier;
 pthread_barrier_t end_barrier;
 
-void matmul_Q8_0_slice(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix, int in_dim, int out_dim, int start_row, int end_row) {
+void matmul_Q8_0_slice(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix, int in_dim, int out_dim, int start_row, int end_row, int offset) {
     // printf("matmul_Q8_0_slice: in: %zu xout: %zu in_dim: %d out_dim: %d start_row: %d end_row: %d\n", in_tensor->dim, out_tensor->dim, in_dim, out_dim, start_row, end_row);
     float * xout_data = __builtin_assume_aligned(data_f32(out_tensor), 32);
     int8_t * x_data = __builtin_assume_aligned(data_i8(in_tensor), 32);
@@ -56,7 +57,7 @@ void matmul_Q8_0_slice(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix, in
             // This might be because we can do the multiplication while waiting for memory.
             sum += ((float) ival) * w_scale[in / GS + j] * x_scale[j];
         }
-        xout_data[i-start_row] = sum;
+        xout_data[i-start_row+offset] = sum;
     }
 }
 
@@ -82,14 +83,20 @@ void *worker_fn(void *arg) {
         // Wait at barrier until work is available
         pthread_barrier_wait(&start_barrier);
 
-        // Do assigned chunk
-        matmul_Q8_0_slice(ctx->temp_f32, ctx->in_tensor, ctx->matrix, 
-                         ctx->in_tensor->dim, ctx->out_tensor->dim, 
-                         ctx->start_row, ctx->end_row);
+        if (ctx->quantize) {
+            matmul_Q8_0_slice(ctx->temp_f32, ctx->in_tensor, ctx->matrix, 
+                ctx->in_tensor->dim, ctx->out_tensor->dim, 
+                ctx->start_row, ctx->end_row, 0);
 
-        convert_f32_q8_slice_into_offset(ctx->out_tensor, ctx->temp_f32, 
-                                         0, ctx->end_row - ctx->start_row, 
-                                         ctx->start_row);
+            convert_f32_q8_slice_into_offset(ctx->out_tensor, ctx->temp_f32, 
+                0, ctx->end_row - ctx->start_row, 
+                ctx->start_row);
+        } else {
+            // Directly into the output tensor.
+            matmul_Q8_0_slice(ctx->out_tensor, ctx->in_tensor, ctx->matrix, 
+                ctx->in_tensor->dim, ctx->out_tensor->dim, 
+                ctx->start_row, ctx->end_row, ctx->start_row);
+        }
         
         // Wait at barrier until all threads complete
         pthread_barrier_wait(&end_barrier);
@@ -98,7 +105,7 @@ void *worker_fn(void *arg) {
     return NULL;
 }
 
-void matmul_parallel(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix, int in_dim, int out_dim) {
+void matmul_parallel(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix) {
     // Set up work for all threads
     for (int i = 0; i < num_threads; ++i) {
         contexts[i].in_tensor = in_tensor;
@@ -106,8 +113,29 @@ void matmul_parallel(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix, int 
         contexts[i].matrix = matrix;
         float start = (float)i / num_threads;
         float end = (float)(i + 1) / num_threads;
-        contexts[i].start_row = round_down_32(start * out_dim);
-        contexts[i].end_row = round_down_32(end * out_dim);
+        contexts[i].start_row = round_down_32(start * out_tensor->dim);
+        contexts[i].end_row = round_down_32(end * out_tensor->dim);
+        contexts[i].quantize = true;
+    }
+    
+    // Trigger all threads to start working
+    pthread_barrier_wait(&start_barrier);
+    
+    // Wait for all threads to complete
+    pthread_barrier_wait(&end_barrier);
+}
+
+void matmul_parallel_f32(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix) {
+    // Set up work for all threads
+    for (int i = 0; i < num_threads; ++i) {
+        contexts[i].in_tensor = in_tensor;
+        contexts[i].out_tensor = out_tensor;
+        contexts[i].matrix = matrix;
+        float start = (float)i / num_threads;
+        float end = (float)(i + 1) / num_threads;
+        contexts[i].start_row = round_down_32(start * out_tensor->dim);
+        contexts[i].end_row = round_down_32(end * out_tensor->dim);
+        contexts[i].quantize = false;
     }
     
     // Trigger all threads to start working

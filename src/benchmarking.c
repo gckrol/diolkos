@@ -57,5 +57,5 @@ void benchmark_run(void) {
 }
 
 void benchmark_runp(void) {
-    matmul_parallel(output_q8, input_q8, matrix, input->dim, output->dim);
+    matmul_parallel(output_q8, input_q8, matrix);
 }

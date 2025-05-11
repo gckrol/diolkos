@@ -3,7 +3,8 @@
 
 typedef struct Tensor Tensor;
 
-void matmul_parallel(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix, int in_dim, int out_dim);
+void matmul_parallel(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix);
+void matmul_parallel_f32(Tensor* out_tensor, Tensor* in_tensor, Tensor* matrix);
 void init_threads();
 
 #endif // THREADING_H

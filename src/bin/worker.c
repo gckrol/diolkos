@@ -10,6 +10,7 @@
 #include <netinet/tcp.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
+#include <math.h>
 
 #include "worker_commands.h"
 #include "tensor.h"
@@ -229,7 +230,7 @@ void multiply(int client_fd, bool perform_matmul) {
     // printf("Output vector dim: %zu\n", s->output_vector->dim);
 
     if (perform_matmul) {
-        matmul_parallel(s->output_vector, s->input_vector, s->matrix, s->input_vector->dim, s->output_vector->dim);
+        matmul_parallel(s->output_vector, s->input_vector, s->matrix);
     } else {
         // Keep Valgrind happy.
         memset(s->output_vector->data, 0, Tensor_storage_size(s->output_vector));
@@ -261,10 +262,52 @@ void multiply_qkv(int client_fd) {
     for (int i = 0; i < 3; i++) {
         Tensor *matrix = slices[slice_ids[i]].matrix;
         Tensor *output_vector = output_vectors[i];
-        matmul_parallel(output_vector, input_vector, matrix, input_vector->dim, output_vector->dim);
+        matmul_parallel(output_vector, input_vector, matrix);
     }
 
     write_tensors(client_fd, output_vectors, 3);
+}
+
+void ffn_silu(int client_fd) {
+    // 1 input, 1 output, 3 matrices.
+    uint32_t slice_ids[3];
+    read_full(client_fd, slice_ids, sizeof(slice_ids));
+
+    Slice *s1 = &slices[slice_ids[0]];
+    Slice *s2 = &slices[slice_ids[1]];
+    Slice *s3 = &slices[slice_ids[2]];
+
+    read_tensors(client_fd, &s1->input_vector, 1);
+
+    // TODO: memory allocation.
+    Tensor *hb = tensor_create(s1->output_vector->dim, F32);
+    Tensor *hb2 = tensor_create(s3->output_vector->dim, F32);
+
+    matmul_parallel_f32(hb, s1->input_vector, s1->matrix);
+    matmul_parallel_f32(hb2, s1->input_vector, s3->matrix);
+
+    // SwiGLU non-linearity
+    float *hb_data = data_f32(hb);
+    float *hb2_data = data_f32(hb2);
+    #pragma omp simd
+    for (int i = 0; i < hb->dim; i++) {
+        float val = hb_data[i];
+        // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
+        val *= (1.0f / (1.0f + expf(-val)));
+        // elementwise multiply with w3(x)
+        val *= hb2_data[i];
+        hb_data[i] = val;
+    }
+
+    // Quantize.
+    convert_into(s2->input_vector, hb);
+
+    matmul_parallel(s2->output_vector, s2->input_vector, s2->matrix);
+
+    write_tensors(client_fd, &s2->output_vector, 1);
+
+    tensor_destroy(hb);
+    tensor_destroy(hb2);
 }
 
 int main(int argc, char *argv[]) {
@@ -361,6 +404,8 @@ int main(int argc, char *argv[]) {
                 multiply_qkv(client_fd);
             } else if (command == CMD_MULTIPLY_OVERHEAD) {
                 multiply(client_fd, false);
+            } else if (command == CMD_FFN_SILU) {
+                ffn_silu(client_fd);
             } else if (command == CMD_PING) {
                 // Simply send back a single byte for ping latency measurement
                 uint8_t response = 0x01;

@@ -515,26 +515,9 @@ Tensor* forward_remote(Transformer* transformer, int token, int pos) {
         // ffn rmsnorm
         rmsnorm(s->xb, x, layer->rms_ffn_weight, dim);
 
-        // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
-        // first calculate self.w1(x) and self.w3(x)
-        matmul_remote(s->hb, s->xb, layer->w1, dim, hidden_dim);
-        matmul_remote(s->hb2, s->xb, layer->w3, dim, hidden_dim);
-
-        // SwiGLU non-linearity
-        float *hb_data = data_f32(s->hb);
-        float *hb2_data = data_f32(s->hb2);
-        #pragma omp simd
-        for (int i = 0; i < hidden_dim; i++) {
-            float val = hb_data[i];
-            // silu(x)=x*σ(x), where σ(x) is the logistic sigmoid
-            val *= (1.0f / (1.0f + expf(-val)));
-            // elementwise multiply with w3(x)
-            val *= hb2_data[i];
-            hb_data[i] = val;
-        }
-
-        // final matmul to get the output of the ffn
-        matmul_remote(s->xb, s->hb, layer->w2, hidden_dim, dim);
+        // FFN non-linearity
+        Tensor *matrices[3] = {layer->w1, layer->w2, layer->w3};
+        remote_command(layer->w1->tensor_id, CMD_FFN_SILU, &s->xb, 1, &s->xb, 1, matrices, 3);
 
         // residual connection
         for (int i = 0; i < dim; i++) {
