@@ -40,15 +40,17 @@ int main(int argc, char *argv[]) {
         (start.tv_nsec - startup_time.tv_nsec) / 1e6;
     printf("Startup took %.3f ms\n", startup_elapsed_ms);
 
-    clock_gettime(CLOCK_MONOTONIC, &start);  
-    for (int i = 0; i < iterations; i++) {
-        benchmark_runp();
+    for (;;) {
+        clock_gettime(CLOCK_MONOTONIC, &start);  
+        for (int i = 0; i < iterations; i++) {
+            benchmark_runp();
+        }
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        double elapsed_ms = (end.tv_sec - start.tv_sec) * 1000.0 +
+            (end.tv_nsec - start.tv_nsec) / 1e6;
+        double gmac = (double)input_size * output_size * iterations / (elapsed_ms / 1000.0) / 1e9;
+        printf("Benchmarking took %.3f ms (%.1f GMAC)\n", elapsed_ms, gmac);
     }
-    clock_gettime(CLOCK_MONOTONIC, &end);
-    double elapsed_ms = (end.tv_sec - start.tv_sec) * 1000.0 +
-        (end.tv_nsec - start.tv_nsec) / 1e6;
-    double gmac = (double)input_size * output_size * iterations / (elapsed_ms / 1000.0) / 1e9;
-    printf("Benchmarking took %.3f ms (%.1f GMAC)\n", elapsed_ms, gmac);
 
     // No need to call benchmark_destroy() here, as the program will exit.
     return 0;

@@ -26,6 +26,7 @@
 #include "fnv1a.h"
 #include "utils.h"
 #include "tensor.h"
+#include "remote_workers.h"
 
 // VS Code shows this as undefined.
 #ifndef CLOCK_MONOTONIC
@@ -34,17 +35,6 @@
 
 // Log file for performance metrics
 FILE* perf_log = NULL;
-
-typedef struct RemoteWorker {
-    int fd;
-    const char *address;
-    int port;
-    float start;
-    float end;
-} RemoteWorker;
-
-RemoteWorker *workers = NULL;
-int num_workers = 1;
 
 static int max(int a, int b) {
     return (a > b) ? a : b;
@@ -75,6 +65,7 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
     // Initialize arrays to track individual worker times (for debugging)
     double worker_send_times[num_workers];
     double worker_recv_times[num_workers];
+    double worker_deq_times[num_workers];
 
     assert(wt->tensor_id > 0);
     convert_into(temp_q8, xt);
@@ -127,7 +118,7 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
 
     // Read outputs.
     for (int w = 0; w < num_workers; w++) {
-        struct timespec worker_recv_start, worker_recv_end;
+        struct timespec worker_recv_start, worker_recv_end, worker_deq_end;
         clock_gettime(CLOCK_MONOTONIC, &worker_recv_start);
         
         RemoteWorker *worker = &workers[w];
@@ -161,12 +152,15 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
             exit(EXIT_FAILURE);
         }
 
+        clock_gettime(CLOCK_MONOTONIC, &worker_recv_end);
+        worker_recv_times[w] = time_in_ms2(&worker_recv_start, &worker_recv_end);
+
         convert_q8_f32_slice_into_offset(xoutt, t, 0, length, start);
 
         tensor_destroy(t);
-        
-        clock_gettime(CLOCK_MONOTONIC, &worker_recv_end);
-        worker_recv_times[w] = time_in_ms2(&worker_recv_start, &worker_recv_end);
+
+        clock_gettime(CLOCK_MONOTONIC, &worker_deq_end);
+        worker_deq_times[w] = time_in_ms2(&worker_recv_end, &worker_deq_end);
     }
     
     // End timing the receive phase
@@ -188,6 +182,9 @@ void matmul_remote(Tensor* xoutt, Tensor* xt, Tensor* wt, int in_dim, int out_di
         fprintf(perf_log, "%.3f,", total_send_time);
         for (int w = 0; w < num_workers; w++) {
             fprintf(perf_log, "%.3f,", worker_recv_times[w]);
+        }
+        for (int w = 0; w < num_workers; w++) {
+            fprintf(perf_log, "%.3f,", worker_deq_times[w]);
         }
         fprintf(perf_log, "%.3f,%.3f,%d,%.3f\n", total_recv_time, total_time, wt->dim, gmac);
     }
@@ -506,7 +503,7 @@ Tensor* forward_remote(Transformer* transformer, int token, int pos) {
     rmsnorm(x, x, st->rms_final_weight, dim);
 
     // classifier into logits
-    matmul(s->logits, x, st->wcls, p->dim, p->vocab_size);
+    matmul_remote(s->logits, x, st->wcls, p->dim, p->vocab_size);
     return s->logits;
 }
 
@@ -682,7 +679,6 @@ void error_usage(void) {
 }
 
 int main(int argc, char *argv[]) {
-
     // default parameters
     char *checkpoint_path = NULL;  // e.g. out/model.bin
     const char *tokenizer_path = "python/tokenizer.bin";
@@ -742,27 +738,35 @@ int main(int argc, char *argv[]) {
     // Connect to the workers and upload their matrices.
 
     // Define the workers. TODO: load from config file, or have them register.
-    num_workers = 2;
+    // num_workers = 2;
+    // workers = calloc(num_workers, sizeof(RemoteWorker));
+    // // workers[0].address = "127.0.0.1";
+    // // workers[0].port = 1234;
+    // // workers[0].start = 0.0f;
+    // // workers[0].end = 0.7f;
+    // // workers[1].address = "127.0.0.1";
+    // // workers[1].port = 1235;
+    // // workers[1].start = 0.7f;
+    // // workers[1].end = 1.0f;
+    // // workers[1].address = "192.168.178.12";
+
+    // workers[1].address = "192.168.178.12";
+    // // workers[0].address = "192.168.178.36";
+    // workers[1].port = 1234;
+    // workers[1].start = 0.0f;
+    // workers[1].end = 0.45f;
+
+    // workers[0].address = "192.168.178.36";
+    // workers[0].port = 1234;
+    // workers[0].start = 0.45f;
+    // workers[0].end = 1.0f;
+
+    num_workers = 1;
     workers = calloc(num_workers, sizeof(RemoteWorker));
     workers[0].address = "127.0.0.1";
     workers[0].port = 1234;
     workers[0].start = 0.0f;
-    workers[0].end = 0.7f;
-    // workers[1].address = "127.0.0.1";
-    // workers[1].port = 1235;
-    // workers[1].start = 0.7f;
-    // workers[1].end = 1.0f;
-    workers[1].address = "192.168.178.12";
-    workers[1].port = 1234;
-    workers[1].start = 0.7f;
-    workers[1].end = 1.0f;
-
-    // num_workers = 1;
-    // workers = calloc(num_workers, sizeof(RemoteWorker));
-    // workers[0].address = "127.0.0.1";
-    // workers[0].port = 1234;
-    // workers[0].start = 0.0f;
-    // workers[0].end = 1.0f;
+    workers[0].end = 1.0f;
 
     // num_workers = 1;
     // workers = calloc(num_workers, sizeof(RemoteWorker));
@@ -772,15 +776,21 @@ int main(int argc, char *argv[]) {
     // workers[0].end = 1.0f;
 
     // Verify start/end of all workers are consecutive
+    float total = 0.0f;
     for (int i = 0; i < num_workers; i++) {
         if (workers[i].start < 0.0f || workers[i].end > 1.0f) {
             fprintf(stderr, "Worker %d: start/end must be in [0,1]\n", i);
             exit(EXIT_FAILURE);
         }
-        if (i > 0 && workers[i].start != workers[i - 1].end) {
-            fprintf(stderr, "Worker %d: start (%f) does not match previous worker end (%f)\n", i, workers[i].start, workers[i - 1].end);
-            exit(EXIT_FAILURE);
-        }
+        total += workers[i].end - workers[i].start;
+        // if (i > 0 && workers[i].start != workers[i - 1].end) {
+        //     fprintf(stderr, "Worker %d: start (%f) does not match previous worker end (%f)\n", i, workers[i].start, workers[i - 1].end);
+        //     exit(EXIT_FAILURE);
+        // }
+    }
+    if (total < 0.999f || total > 1.001f) {
+        fprintf(stderr, "Workers do not cover the full range [0,1]: %f\n", total);
+        exit(EXIT_FAILURE);
     }
 
     // Connect to each of them.
@@ -807,6 +817,9 @@ int main(int argc, char *argv[]) {
 
         // Busy wait (more CPU, but much lower latency).
         int val = 1;
+#ifndef SO_BUSY_POLL
+#define SO_BUSY_POLL 1
+#endif
         setsockopt(workers[i].fd, SOL_SOCKET, SO_BUSY_POLL, &val, sizeof(val));
 
         // Loop over all matrices, and send the slice to the worker.
@@ -856,6 +869,9 @@ int main(int argc, char *argv[]) {
         for (int i = 0; i < num_workers; i++) {
             fprintf(perf_log, "worker%d_recv_time,", i);
         }
+        for (int i = 0; i < num_workers; i++) {
+            fprintf(perf_log, "worker%d_deq_time,", i);
+        }
         fprintf(perf_log, "total_recv_time,total_time,dim,gmac\n");
     } else {
         fprintf(stderr, "Warning: Failed to open performance log file\n");
@@ -870,6 +886,13 @@ int main(int argc, char *argv[]) {
     if (perf_log != NULL) {
         fclose(perf_log);
         fprintf(stderr, "Performance log written to matmul_perf.csv\n");
+    }
+
+    // Final benchmark to detect any throttling.
+    for (int i = 0; i < num_workers; i++) {
+        benchmark_latency(&workers[i], 10);
+        benchmark_overhead(transformer.safetensors, &workers[i], 10, false);
+        benchmark_overhead(transformer.safetensors, &workers[i], 10, true);
     }
 
     return 0;

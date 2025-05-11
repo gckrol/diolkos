@@ -289,6 +289,9 @@ int main(int argc, char *argv[]) {
 
         // Busy wait (more CPU, but much lower latency).
         int val = 1;
+#ifndef SO_BUSY_POLL
+#define SO_BUSY_POLL 1
+#endif
         setsockopt(client_fd, SOL_SOCKET, SO_BUSY_POLL, &val, sizeof(val));
 
         printf("Connected to client: %s\n", inet_ntoa(client_addr.sin_addr));
