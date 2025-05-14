@@ -1,10 +1,19 @@
-# choose your compiler, e.g. gcc/clang
-# example override to clang: make run CC=clang
-# Currently, gcc seems to be better at vectorizing.
+WARN = -Wall -Wextra -Wpedantic -Wstrict-prototypes -Wpointer-arith -Wcast-qual -Wwrite-strings \
+-Wconversion -Wshadow -Wcast-align -Wstrict-prototypes -Wmissing-prototypes \
+-Wmissing-declarations -Wuninitialized \
+-Wdouble-promotion -Wfloat-equal -Wnull-dereference -Wformat=2 \
+\
+-Wno-sign-conversion -Wno-implicit-float-conversion -Wno-shorten-64-to-32 -Wno-double-promotion \
+-Wno-float-conversion -Wno-string-conversion \
+-Wno-gnu-folding-constant -fno-unroll-loops \
+-Wno-implicit-int-conversion \
+\
+-Werror=implicit-function-declaration -Werror=return-type
 
-WARN = -Wall -Wextra -Wpedantic -Wstrict-prototypes -Wpointer-arith -Wcast-qual -Wwrite-strings -Werror=implicit-function-declaration
+SANITIZE = # -fsanitize=undefined -fsanitize=address
+
 # CC = gcc $(WARN) -fopt-info-vec
-CC = clang $(WARN) -Wno-gnu-folding-constant -fno-unroll-loops # -Rpass=loop-vectorize  -Rpass-missed=loop-vectorize -Rpass-analysis=loop-vectorize
+CC = clang $(WARN) $(SANITIZE) # -Rpass=loop-vectorize  -Rpass-missed=loop-vectorize -Rpass-analysis=loop-vectorize
 
 
 # Source files and object files
@@ -33,6 +42,10 @@ bin/worker: obj/bin/worker.o $(OBJ)
 	$(CC) $(OPT) $(INC) -g -o $@ $^ -lm
 
 bin/benchmarkp: obj/bin/benchmarkp.o $(OBJ)
+	@mkdir -p bin
+	$(CC) $(OPT) $(INC) -g -o $@ $^ -lm
+
+bin/mesh: obj/bin/mesh.o $(OBJ)
 	@mkdir -p bin
 	$(CC) $(OPT) $(INC) -g -o $@ $^ -lm
 
