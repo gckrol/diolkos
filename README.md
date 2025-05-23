@@ -124,7 +124,7 @@ make compile_commands
 
 ## License
 
-Diolkos is licensed AGPLv3. Note that the original llama2.c is licensed MIT.
+Diolkos is licensed AGPLv3+. Note that the original llama2.c is licensed MIT.
 
     Diolkos - LLM inference cluster software written in C
     Copyright (C) 2023 Andrej Karpathy (llama2.c)
@@ -146,7 +146,7 @@ Diolkos is licensed AGPLv3. Note that the original llama2.c is licensed MIT.
 
 Bugfixes are always welcome. For features, open a ticket first. Forking and running experiments with this code is always appreciated though!
 
-Note: please license your contributions as MIT. This way I can switch to MIT later if the AGPLv3 is a hurdle - or relicense it for companies that are scared of the AGPL. That way I could actually get paid for working on open source software.
+Note: please license your contributions as MIT. This way I can switch to MIT later if the AGPLv3 is a hurdle.
 
 ## FAQ
 
@@ -162,7 +162,15 @@ C++ has way too many complicated features. Give C a try. Everything makes sense.
 
 #### Why doesn't this use llama.cpp/ggml?
 
-It's easier to experiment when you control and know all the code. Besides, it's fun. Maybe more backends will be added in the future.
+It's easier to experiment when you control and all the code. Maybe more backends will be added in the future.
+
+#### Should I be scared of the AGPL?
+
+The AGPL (in full: Affero GNU Public License) extends the GPL with a clause that requires the following: if you make any changes to the code, you need to make these changes available to the users of the software, even if these users access the software over the network.
+
+This means that as long as you either don't make changes, or place a link somewhere that allows the users to download the changed code - you're good.
+
+(note that this is not legal advice)
 
 #### Can we pay you to add a feature or hire you for consulting?
 
