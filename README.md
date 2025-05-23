@@ -1,16 +1,35 @@
-# BoardMind
+# Diolkos
 
-What if that pile of electronics junk you have could think? Now it can! BoardMind turns your single-board computers, old laptops, washing machines (well - not yet) into a cluster that can run inference at acceptable speeds.
+What if that pile of electronics junk you have could think? Now it can! Diolkos turns your single-board computers, old laptops, washing machines (well - not yet) into a cluster that can run inference at acceptable speeds.
 
 - Are you preparing for after the apocalypse, where supply of electronics is limited and you have to use what you've got?
 - Do you want to play around with electronics and inference, and learn how it works?
 - Do you want to reduce your dependence on the big players (Nvidia, AMD, Intel, Apple), and run inference on RISC-V or ARM?
 
-Give BoardMind a try!
+Diolkos is a local distributed inference runtime, targeting old or low-powered hardware, including RISC-V/ARM devboards. This reduces dependence on both the cloud and on large non-EU CPU/GPU vendors. The target user is anyone who is able to install Linux. The code aims to be clean and well-documented, so others can build on top of it.
 
-BoardMind started as a fork of [llama2.c](https://github.com/karpathy/llama2.c). Highly recommended if you want to hack on some LLM inference code!
+Diolkos started as a fork of [llama2.c](https://github.com/karpathy/llama2.c). Highly recommended if you want to hack on some LLM inference code!
 
-## Status
+## Roadmap
+
+Project goals:
+- High-quality, plain C code
+- Runs on all Linux devices, especially tiny ones (RISC-V, ARM boards)
+- Uses the CPU, not the GPU, no accelerators
+- Good performance
+- Small, predictable RAM usage (no crashes while loading)
+- Starts up quickly
+- Easy to set up and use
+- Production-ready (within the constraints of the hardware)
+- Easy to hack on
+
+Non-goals (for now):
+- GPU or other accelerator support - unless it's 2 lines of code
+- Windows/MacOS support
+
+### Phase 1 (completed)
+
+Phase 1 of this project has been completed, and Diolkos currently supports heterogeneous local inference with tensor parallelism, using a star topology. This achieves a small speedup over running inference on a single node. Single-node CPU performance is 90% of llama.cpp, all while using a clean, self-contained C implementation without the use of intrinsics or assembly code.
 
 The code is still highly experimental, but the following features are all working:
 
@@ -26,27 +45,39 @@ Supported model types:
 Supported model formats:
 - Non-quantized (F16/BF16/BF32) safetensor. These are widely available on HuggingFace.
 
-## Goals
+### Phase 2
 
-Project goals:
-- High-quality, plain C code
-- Runs on all Linux devices, especially tiny ones (RISC-V, ARM boards)
-- Uses the CPU, not the GPU, no accelerators.
-- Good performance
-- Small, predictable RAM usage (no crashes while loading)
-- Starts up quickly
-- Easy to set up and use
-- Production-ready (within the constraints of the hardware)
-- Easy to hack on
+* Move from a star topology to a full (logical) mesh.
+* Pipeline all computations.
+* Phase out the use of OpenMP for threading, use pthreads directly everywhere. This will reduce overhead and increase performance. #pragma openmp simd will still be used.
 
-Non goals:
-- GPU or other accelerator support - unless it's 2 lines of code.
-- Windows/MacOS support
+### Future phases
 
-## Running
+Future phases may include:
 
-You first need to download a model. It's easiest to `git clone` a model from HuggingFace. This model needs to be
-in hte safetensors format. In this example, the `Llama-2-7b-chat-hf` model has been placed in the `models` directory.
+* Loading GGUF models.
+* Loading the tokenizer from the Huggingface model.
+* Basic GPU/accelerator support, perhaps from other projects.
+* Building & tuning for a benchtop RISC-V cluster.
+* Code cleanup & adding comments.
+
+## Comparisons
+
+| Feature/Property                | Petals            | Distributed Llama | Exo              | Llama.cpp        | llama2.cpp       | Diolkos          |
+|---------------------------------|-------------------|-------------------|------------------|------------------|------------------|------------------|
+| Distributed Computation Type    | Star              | Star              | ?                | None             | None             | Star/Mesh*       |
+| Parallelism Type                | Layer             | Tensor            | Layer            | None             | None             | Tensor           |
+| Focus on GPU                    | Yes               | Yes               | Yes              | Yes              | No               | No               |
+| Focus on CPU                    | No                | Yes               | No               | Yes              | Yes              | Yes              |
+| Programming Language            | Python            | C++               | Python           | C++              | C                | C                |
+
+Currently Diolkos uses a star topology, but in the next phase this will change to a mesh topology.
+
+In summary, the goals of this project align most closely with Distributed Llama. This project was evaluated as a base, but the code was deemed too complicated to efficiently experiment with, so instead llama2.c was chosen. Using plain C also makes it easier to control and evaluate generated assembly code and overall performance. For Petals and Exo, these projects use layer parallelism, which would not use all available computing power when running a single inference.
+
+## Usage
+
+You first need to download a model. It's easiest to `git clone` a model from HuggingFace. This model needs to be in the safetensors format. In this example, the `Llama-2-7b-chat-hf` model has been placed in the `models` directory.
 
 To generate the tokenizer.bin file, run the following:
 
@@ -64,7 +95,7 @@ make all
 Run with:
 
 ````bash
-OMP_NUM_THREADS=4 bin/plainllm models/Llama-2-7b-chat-hf -i "It was a dark and stormy night" -n 50
+OMP_NUM_THREADS=4 bin/localinfer models/Llama-2-7b-chat-hf -i "It was a dark and stormy night" -n 50
 ````
 
 ### Clustered (WIP)
@@ -93,9 +124,9 @@ make compile_commands
 
 ## License
 
-BoardMind is licensed AGPLv3. Note that the original llama2.c is licensed MIT.
+Diolkos is licensed AGPLv3. Note that the original llama2.c is licensed MIT.
 
-    BoardMind - LLM inference cluster software written in C
+    Diolkos - LLM inference cluster software written in C
     Copyright (C) 2023 Andrej Karpathy (llama2.c)
     Copyright (C) 2025 Krol Inventions B.V.
 
@@ -106,8 +137,7 @@ BoardMind is licensed AGPLv3. Note that the original llama2.c is licensed MIT.
 
     This program is distributed in the hope that it will be useful,
     but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU Affero General Public License for more details.
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Affero General Public License for more details.
 
     You should have received a copy of the GNU Affero General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
@@ -122,9 +152,9 @@ Note: please license your contributions as MIT. This way I can switch to MIT lat
 
 #### Why C? Why not Rust?
 
-I first tried forking `lm.rs`, but that was a huge hassle. Rust is great for when you know exacly what you want. Writing the code takes 10x as long, but you get production ready code on the first try.
+I first tried forking `lm.rs`, but that was a huge hassle. Rust is great for when you know exactly what you want. Writing the code takes 10x as long, but you get production-ready code on the first try.
 
-This however conflicts with the experimental nature of BoardMind. It's very nice to do something quickly in a hacky way to see if it actually works and if it is what you want. If so, you can secure it later. Besides - BoardMind is not designed to be exposed to the internet anyway.
+This however conflicts with the experimental nature of Diolkos. It's very nice to do something quickly in a hacky way to see if it actually works and if it is what you want. If so, you can secure it later. Besides - Diolkos is not designed to be exposed to the internet anyway.
 
 #### Why C? Why not C++?
 

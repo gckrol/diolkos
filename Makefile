@@ -29,7 +29,7 @@ compile_commands:
 	bear make clean all
 
 .PHONY: all
-all: bin/plainllm bin/stest bin/worker bin/client bin/benchmark
+all: bin/localinfer bin/stest bin/worker bin/client bin/benchmark
 
 # Use OMP by default.
 bin/%: obj/bin/omp/%.o $(OBJ_OMP)
@@ -73,14 +73,14 @@ obj/bin/omp/%.o: src/bin/%.c
 # Useful for testing - build + run with the small stories model.
 .PHONY: run
 run: all
-	./bin/plainllm python/model.bin
+	./bin/localinfer python/model.bin
 
 # useful for a debug build, can then e.g. analyze with valgrind, example:
 # $ valgrind --leak-check=full ./run out/model.bin -n 3
 .PHONY: debug
 debug: 
 	@mkdir -p bin
-	$(CC) -g -o bin/plainllm $(SRC) -lm
+	$(CC) -g -o bin/localinfer $(SRC) -lm
 
 # additionally compiles with OpenMP, allowing multithreaded runs
 # make sure to also enable multiple threads when running, e.g.:
@@ -88,7 +88,7 @@ debug:
 .PHONY: omp
 omp:
 	@mkdir -p bin
-	$(CC) -Ofast -fopenmp -march=native $(SRC) -lm -o bin/plainllm
+	$(CC) -Ofast -fopenmp -march=native $(SRC) -lm -o bin/localinfer
 
 # run all tests
 .PHONY: test
