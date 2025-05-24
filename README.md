@@ -51,9 +51,11 @@ Supported model formats:
 * Pipeline all computations.
 * Phase out the use of OpenMP for threading, use pthreads directly everywhere. This will reduce overhead and increase performance. #pragma openmp simd will still be used.
 
+See [Phase 2](docs/phase2.md) for more details.
+
 ### Future phases
 
-Future phases may include:
+Ideas for future phases:
 
 * Loading GGUF models.
 * Loading the tokenizer from the Huggingface model.
@@ -146,19 +148,17 @@ Diolkos is licensed AGPLv3+. Note that the original llama2.c is licensed MIT.
 
 Bugfixes are always welcome. For features, open a ticket first. Forking and running experiments with this code is always appreciated though!
 
-Note: please license your contributions as MIT. This way I can switch to MIT later if the AGPLv3 is a hurdle.
+Note: if you're comfortable with that, please license your contributions as MIT. This way we can switch to MIT later if the AGPLv3 turns out to be a barrier to adoption.
 
 ## FAQ
 
-#### Why C? Why not Rust?
+#### Why C? Why not Rust? Or C++?
 
 I first tried forking `lm.rs`, but that was a huge hassle. Rust is great for when you know exactly what you want. Writing the code takes 10x as long, but you get production-ready code on the first try.
 
 This however conflicts with the experimental nature of Diolkos. It's very nice to do something quickly in a hacky way to see if it actually works and if it is what you want. If so, you can secure it later. Besides - Diolkos is not designed to be exposed to the internet anyway.
 
-#### Why C? Why not C++?
-
-C++ has way too many complicated features. Give C a try. Everything makes sense. Some things are a bit more manual and verbose, but with a LLM helping out that's not a problem. Make sure to use plenty of asserts, and don't hesitate to run Valgrind!
+C++ has way too many complicated features. Give C a try. Everything makes sense. Some things are a bit more manual and verbose, but with a LLM helping out that's not a problem. Make sure to use plenty of asserts, and don't hesitate to run Valgrind! Note that it is not out of the question for the project to switch to a small subset of C++ (C with classes) in the future.
 
 #### Why doesn't this use llama.cpp/ggml?
 
