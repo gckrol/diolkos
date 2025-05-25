@@ -37,7 +37,8 @@ The code is still highly experimental, but the following features are all workin
 - Automatic quantization to Q8_0.
 - Efficient caching/loading of quantized models.
 - 8-bit inference at 90% of the speed of Llama.cpp.
-- Clustered operation at 90% efficiency.
+- 23% speedup at 2 nodes (62% efficiency)
+- See the [benchmarks](doc/benchmarks.md)
 
 Supported model types:
 - LLaMA 2
